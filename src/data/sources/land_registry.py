@@ -97,24 +97,26 @@ class LandRegistryPricePaid(DataSource):
         # Strip braces and surrounding whitespace, replace empty strings with null.
         # Apply per-column to avoid duplicate-name errors from type selectors.
         str_cols = LAND_REGISTRY_COLUMNS  # all columns are String at this point
-        df = df.with_columns([
-            pl.col(c).str.strip_chars("{}").str.strip_chars().alias(c) for c in str_cols
-        ])
-        df = df.with_columns([
-            pl.when(pl.col(c) == "")
-            .then(pl.lit(None, dtype=pl.String))
-            .otherwise(pl.col(c))
-            .alias(c)
-            for c in str_cols
-        ])
+        df = df.with_columns(
+            [pl.col(c).str.strip_chars("{}").str.strip_chars().alias(c) for c in str_cols]
+        )
+        df = df.with_columns(
+            [
+                pl.when(pl.col(c) == "")
+                .then(pl.lit(None, dtype=pl.String))
+                .otherwise(pl.col(c))
+                .alias(c)
+                for c in str_cols
+            ]
+        )
 
         # Cast price to integer and date to datetime
-        df = df.with_columns([
-            pl.col("price").cast(pl.Int64, strict=False),
-            pl.col("date_of_transfer").str.to_datetime(
-                format="%Y-%m-%d %H:%M", strict=False
-            ),
-        ])
+        df = df.with_columns(
+            [
+                pl.col("price").cast(pl.Int64, strict=False),
+                pl.col("date_of_transfer").str.to_datetime(format="%Y-%m-%d %H:%M", strict=False),
+            ]
+        )
 
         logger.info("Loaded %d transactions", len(df))
         return df
@@ -143,10 +145,12 @@ class LandRegistryPricePaid(DataSource):
         df = df.filter((pl.col("price") > 10_000) & (pl.col("price") < 50_000_000))
 
         # Extract year and month for time-based analysis
-        df = df.with_columns([
-            pl.col("date_of_transfer").dt.year().alias("year"),
-            pl.col("date_of_transfer").dt.month().alias("month"),
-        ])
+        df = df.with_columns(
+            [
+                pl.col("date_of_transfer").dt.year().alias("year"),
+                pl.col("date_of_transfer").dt.month().alias("month"),
+            ]
+        )
 
         # Extract outward postcode (area-level grouping)
         df = df.with_columns(
@@ -172,21 +176,27 @@ class LandRegistryPricePaid(DataSource):
             if not batches:
                 break
             chunk = batches[0]
-            chunk = chunk.with_columns([
-                pl.col(c).str.strip_chars("{}").str.strip_chars().alias(c)
-                for c in LAND_REGISTRY_COLUMNS
-            ])
-            chunk = chunk.with_columns([
-                pl.when(pl.col(c) == "")
-                .then(pl.lit(None, dtype=pl.String))
-                .otherwise(pl.col(c))
-                .alias(c)
-                for c in LAND_REGISTRY_COLUMNS
-            ])
-            chunk = chunk.with_columns([
-                pl.col("price").cast(pl.Int64, strict=False),
-                pl.col("date_of_transfer").str.to_datetime(
-                    format="%Y-%m-%d %H:%M", strict=False
-                ),
-            ])
+            chunk = chunk.with_columns(
+                [
+                    pl.col(c).str.strip_chars("{}").str.strip_chars().alias(c)
+                    for c in LAND_REGISTRY_COLUMNS
+                ]
+            )
+            chunk = chunk.with_columns(
+                [
+                    pl.when(pl.col(c) == "")
+                    .then(pl.lit(None, dtype=pl.String))
+                    .otherwise(pl.col(c))
+                    .alias(c)
+                    for c in LAND_REGISTRY_COLUMNS
+                ]
+            )
+            chunk = chunk.with_columns(
+                [
+                    pl.col("price").cast(pl.Int64, strict=False),
+                    pl.col("date_of_transfer").str.to_datetime(
+                        format="%Y-%m-%d %H:%M", strict=False
+                    ),
+                ]
+            )
             yield self.clean(chunk)

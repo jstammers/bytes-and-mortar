@@ -200,10 +200,7 @@ class EPCData(DataSource):
         logger.info("Cleaning EPC data (%d rows)", len(df))
 
         # Standardise column names to snake_case
-        df = df.rename({
-            col: col.lower().replace("-", "_").replace(" ", "_")
-            for col in df.columns
-        })
+        df = df.rename({col: col.lower().replace("-", "_").replace(" ", "_") for col in df.columns})
 
         # Standardise postcode format
         if "postcode" in df.columns:

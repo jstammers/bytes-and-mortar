@@ -74,9 +74,7 @@ def link_sales_to_epc(
                     pl.col("transaction_id").is_in(unmatched_ids.to_list())
                 )
                 # Postcode-only fallback for unmatched rows
-                epc_for_fallback = (
-                    epc.drop("_addr_key") if "_addr_key" in epc.columns else epc
-                )
+                epc_for_fallback = epc.drop("_addr_key") if "_addr_key" in epc.columns else epc
                 fallback = unmatched_sales.drop("_addr_key").join(
                     epc_for_fallback,
                     on="postcode",
@@ -113,7 +111,7 @@ def link_sales_to_epc(
             .drop("_date_diff")
         )
 
-    match_rate = (
+    match_rate = float(
         merged["current_energy_rating"].is_not_null().mean()
         if "current_energy_rating" in merged.columns
         else 0.0
@@ -160,10 +158,12 @@ def enrich_with_hpi(
 
     # Create year-month key from date column
     if "date" in hpi_subset.columns:
-        hpi_subset = hpi_subset.with_columns([
-            pl.col("date").cast(pl.Date).dt.year().alias("_hpi_year"),
-            pl.col("date").cast(pl.Date).dt.month().alias("_hpi_month"),
-        ]).drop(["date"])
+        hpi_subset = hpi_subset.with_columns(
+            [
+                pl.col("date").cast(pl.Date).dt.year().alias("_hpi_year"),
+                pl.col("date").cast(pl.Date).dt.month().alias("_hpi_month"),
+            ]
+        ).drop(["date"])
 
     if "year" in df.columns and "month" in df.columns:
         merged = df.join(

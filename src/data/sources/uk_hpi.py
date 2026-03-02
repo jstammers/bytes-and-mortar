@@ -56,20 +56,17 @@ class UKHousePriceIndex(DataSource):
         logger.info("Cleaning UK HPI data (%d rows)", len(df))
 
         # Standardise column names
-        df = df.rename({
-            col: col.strip().lower().replace(" ", "_")
-            for col in df.columns
-        })
+        df = df.rename({col: col.strip().lower().replace(" ", "_") for col in df.columns})
 
         # Parse date column
         if "date" in df.columns:
+            df = df.with_columns(pl.col("date").str.to_date(format="%Y-%m-%d", strict=False))
             df = df.with_columns(
-                pl.col("date").str.to_date(format="%Y-%m-%d", strict=False)
+                [
+                    pl.col("date").dt.year().alias("year"),
+                    pl.col("date").dt.month().alias("month"),
+                ]
             )
-            df = df.with_columns([
-                pl.col("date").dt.year().alias("year"),
-                pl.col("date").dt.month().alias("month"),
-            ])
 
         # Ensure numeric columns are numeric
         price_cols = [
