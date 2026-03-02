@@ -97,3 +97,5 @@ uv.lock
 
 # pytest cache
 .pytest_cache/
+
+.claude/

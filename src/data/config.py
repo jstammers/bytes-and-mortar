@@ -111,8 +111,8 @@ EPC_KEY_FIELDS = [
 ]
 
 # --- UK House Price Index ---
-UK_HPI_BASE_URL = "http://publicdata.landregistry.gov.uk/market-trend"
-UK_HPI_DOWNLOAD_URL = f"{UK_HPI_BASE_URL}/house-price-index-data/UK-HPI-full-file-2025-03.csv"
+UK_HPI_BASE_URL = "https://publicdata.landregistry.gov.uk/market-trend"
+UK_HPI_DOWNLOAD_URL = f"{UK_HPI_BASE_URL}/house-price-index-data/UK-HPI-full-file-2025-04.csv"
 # SPARQL endpoint for programmatic access
 UK_HPI_SPARQL_ENDPOINT = "http://landregistry.data.gov.uk/landregistry/query"
 
