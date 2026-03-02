@@ -12,7 +12,7 @@ Published monthly, covering England, Scotland, Wales and Northern Ireland.
 import logging
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 from src.data.config import UK_HPI_DOWNLOAD_URL
 from src.data.sources.base import DataSource
@@ -36,7 +36,7 @@ class UKHousePriceIndex(DataSource):
         dest = self.raw_dir / "uk_hpi_full.csv"
         return self._download_file(download_url, dest, desc="UK HPI")
 
-    def load(self, filepath: Path | None = None, **kwargs) -> pd.DataFrame:
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.DataFrame:
         """Load UK HPI CSV into DataFrame."""
         if filepath is None:
             filepath = self.raw_dir / "uk_hpi_full.csv"
@@ -47,22 +47,29 @@ class UKHousePriceIndex(DataSource):
             )
 
         logger.info("Loading UK HPI data from %s", filepath)
-        df = pd.read_csv(filepath, low_memory=False)
+        df = pl.read_csv(filepath, infer_schema_length=10000)
         logger.info("Loaded %d UK HPI records", len(df))
         return df
 
-    def clean(self, df: pd.DataFrame) -> pd.DataFrame:
+    def clean(self, df: pl.DataFrame) -> pl.DataFrame:
         """Clean and standardise UK HPI data."""
         logger.info("Cleaning UK HPI data (%d rows)", len(df))
 
         # Standardise column names
-        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_", regex=False)
+        df = df.rename({
+            col: col.strip().lower().replace(" ", "_")
+            for col in df.columns
+        })
 
         # Parse date column
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df["year"] = df["date"].dt.year
-            df["month"] = df["date"].dt.month
+            df = df.with_columns(
+                pl.col("date").str.to_date(format="%Y-%m-%d", strict=False)
+            )
+            df = df.with_columns([
+                pl.col("date").dt.year().alias("year"),
+                pl.col("date").dt.month().alias("month"),
+            ])
 
         # Ensure numeric columns are numeric
         price_cols = [
@@ -79,7 +86,7 @@ class UKHousePriceIndex(DataSource):
             )
         ]
         for col in price_cols:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
 
         # Drop rows with no region/area name
         area_col = None
@@ -88,12 +95,12 @@ class UKHousePriceIndex(DataSource):
                 area_col = candidate
                 break
         if area_col:
-            df = df.dropna(subset=[area_col])
+            df = df.drop_nulls(subset=[area_col])
 
         logger.info("After cleaning: %d rows", len(df))
         return df
 
-    def get_area_prices(self, df: pd.DataFrame, area_name: str) -> pd.DataFrame:
+    def get_area_prices(self, df: pl.DataFrame, area_name: str) -> pl.DataFrame:
         """Filter UK HPI data to a specific area/region."""
         area_col = None
         for candidate in ["regionname", "region_name"]:
@@ -103,5 +110,4 @@ class UKHousePriceIndex(DataSource):
         if area_col is None:
             raise KeyError("No region/area name column found in UK HPI data")
 
-        mask = df[area_col].str.contains(area_name, case=False, na=False)
-        return df[mask].copy()
+        return df.filter(pl.col(area_col).str.contains(f"(?i){area_name}"))

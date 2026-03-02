@@ -19,9 +19,10 @@ Set EPC_API_TOKEN in your .env file.
 import logging
 import os
 import time
+from io import BytesIO
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 import requests
 
 from src.data.config import EPC_DOMESTIC_SEARCH
@@ -167,9 +168,7 @@ class EPCData(DataSource):
 
             text = response.text.strip()
             if text and text.count("\n") > 1:
-                from io import StringIO
-
-                chunk_df = pd.read_csv(StringIO(text))
+                chunk_df = pl.read_csv(BytesIO(text.encode()))
                 all_dfs.append(chunk_df)
 
             time.sleep(EPC_RATE_LIMIT_DELAY)
@@ -177,12 +176,12 @@ class EPCData(DataSource):
         if not all_dfs:
             raise RuntimeError("No EPC data returned for given postcodes.")
 
-        df = pd.concat(all_dfs, ignore_index=True)
-        df.to_csv(dest, index=False)
+        df = pl.concat(all_dfs, how="diagonal_relaxed")
+        df.write_csv(dest)
         logger.info("Saved EPC data for %d postcodes to %s", len(postcodes), dest)
         return dest
 
-    def load(self, filepath: Path | None = None, **kwargs) -> pd.DataFrame:
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.DataFrame:
         """Load EPC CSV into DataFrame."""
         if filepath is None:
             # Find the most recent EPC file
@@ -192,34 +191,35 @@ class EPCData(DataSource):
             filepath = epc_files[-1]
 
         logger.info("Loading EPC data from %s", filepath)
-        df = pd.read_csv(filepath, low_memory=False)
+        df = pl.read_csv(filepath, infer_schema_length=10000)
         logger.info("Loaded %d EPC records", len(df))
         return df
 
-    def clean(self, df: pd.DataFrame) -> pd.DataFrame:
+    def clean(self, df: pl.DataFrame) -> pl.DataFrame:
         """Clean and standardise EPC data."""
         logger.info("Cleaning EPC data (%d rows)", len(df))
 
         # Standardise column names to snake_case
-        df.columns = (
-            df.columns.str.lower()
-            .str.replace("-", "_", regex=False)
-            .str.replace(" ", "_", regex=False)
-        )
+        df = df.rename({
+            col: col.lower().replace("-", "_").replace(" ", "_")
+            for col in df.columns
+        })
 
         # Standardise postcode format
         if "postcode" in df.columns:
-            df["postcode"] = (
-                df["postcode"]
-                .astype(str)
-                .str.upper()
-                .str.strip()
-                .str.replace(r"\s+", " ", regex=True)
+            df = df.with_columns(
+                pl.col("postcode")
+                .cast(pl.String)
+                .str.to_uppercase()
+                .str.strip_chars()
+                .str.replace_all(r"\s+", " ")
             )
 
-        # Parse inspection-date
+        # Parse inspection_date
         if "inspection_date" in df.columns:
-            df["inspection_date"] = pd.to_datetime(df["inspection_date"], errors="coerce")
+            df = df.with_columns(
+                pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
+            )
 
         # Numeric conversions
         numeric_cols = [
@@ -235,20 +235,20 @@ class EPCData(DataSource):
         ]
         for col in numeric_cols:
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+                df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
 
         # Drop rows with no postcode (can't link to sales data)
-        df = df.dropna(subset=["postcode"])
+        df = df.drop_nulls(subset=["postcode"])
 
         # Filter to domestic properties with valid energy ratings
-        valid_ratings = {"A", "B", "C", "D", "E", "F", "G"}
+        valid_ratings = ["A", "B", "C", "D", "E", "F", "G"]
         if "current_energy_rating" in df.columns:
-            df = df[df["current_energy_rating"].isin(valid_ratings)].copy()
+            df = df.filter(pl.col("current_energy_rating").is_in(valid_ratings))
 
         # Keep most recent EPC per property (by building reference)
         if "building_reference_number" in df.columns and "inspection_date" in df.columns:
-            df = df.sort_values("inspection_date", ascending=False).drop_duplicates(
-                subset=["building_reference_number"], keep="first"
+            df = df.sort("inspection_date", descending=True, nulls_last=True).unique(
+                subset=["building_reference_number"], keep="first", maintain_order=True
             )
 
         logger.info("After cleaning: %d rows", len(df))

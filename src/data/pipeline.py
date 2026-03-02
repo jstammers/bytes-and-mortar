@@ -7,36 +7,36 @@ on postcode + address matching, and enriches with UK HPI area-level data.
 import logging
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 from src.data.config import PROCESSED_DIR
 
 logger = logging.getLogger(__name__)
 
 
-def normalise_address(paon: pd.Series, street: pd.Series) -> pd.Series:
+def normalise_address(paon: pl.Series, street: pl.Series) -> pl.Series:
     """Create a normalised address key from PAON + street for matching."""
     addr = (
-        paon.fillna("").astype(str).str.upper().str.strip()
+        paon.fill_null("").cast(pl.String).str.to_uppercase().str.strip_chars()
         + " "
-        + street.fillna("").astype(str).str.upper().str.strip()
+        + street.fill_null("").cast(pl.String).str.to_uppercase().str.strip_chars()
     )
-    return addr.str.replace(r"\s+", " ", regex=True).str.strip()
+    return addr.str.replace_all(r"\s+", " ").str.strip_chars()
 
 
 def link_sales_to_epc(
-    sales: pd.DataFrame,
-    epc: pd.DataFrame,
-) -> pd.DataFrame:
+    sales: pl.DataFrame,
+    epc: pl.DataFrame,
+) -> pl.DataFrame:
     """Link Land Registry sales to EPC records on postcode.
 
     Strategy:
-    1. Exact join on postcode (the most reliable key available in both).
-    2. For each sale, pick the most recent EPC certificate that predates
-       or is closest to the sale date.
+    1. Exact join on postcode + address (the most reliable keys available in both).
+    2. For rows that didn't match on address, fall back to postcode-only.
+    3. For each sale, pick the EPC certificate closest in time to the sale date.
 
     This produces a left join — sales without EPC matches are retained
-    with NaN EPC columns.
+    with null EPC columns.
     """
     logger.info(
         "Linking %d sales to %d EPC records on postcode",
@@ -44,85 +44,79 @@ def link_sales_to_epc(
         len(epc),
     )
 
-    # Ensure matching postcode format
-    sales = sales.copy()
-    epc = epc.copy()
-
     # Create address key for better matching
     if "paon" in sales.columns and "street" in sales.columns:
-        sales["_addr_key"] = normalise_address(sales["paon"], sales["street"])
+        sales = sales.with_columns(
+            normalise_address(sales["paon"], sales["street"]).alias("_addr_key")
+        )
 
     if "address1" in epc.columns:
-        epc["_addr_key"] = (
-            epc["address1"]
-            .fillna("")
-            .astype(str)
-            .str.upper()
-            .str.strip()
-            .str.replace(r"\s+", " ", regex=True)
+        epc = epc.with_columns(
+            pl.col("address1")
+            .fill_null("")
+            .cast(pl.String)
+            .str.to_uppercase()
+            .str.strip_chars()
+            .str.replace_all(r"\s+", " ")
+            .alias("_addr_key")
         )
 
     # Try postcode + address match first
     if "_addr_key" in sales.columns and "_addr_key" in epc.columns:
-        merged = sales.merge(
-            epc,
-            on=["postcode", "_addr_key"],
-            how="left",
-            suffixes=("", "_epc"),
-        )
-        # For rows that didn't match on address, fall back to postcode-only
-        unmatched_mask = (
-            merged["current_energy_rating"].isna()
-            if "current_energy_rating" in merged.columns
-            else pd.Series(True, index=merged.index)
-        )
-        matched = merged[~unmatched_mask]
-        unmatched_sales = sales.loc[
-            sales.index.isin(merged.loc[unmatched_mask, "transaction_id"].values)
-            if "transaction_id" in sales.columns
-            else []
-        ]
+        merged = sales.join(epc, on=["postcode", "_addr_key"], how="left", suffix="_epc")
 
-        if len(unmatched_sales) > 0:
-            fallback = unmatched_sales.merge(
-                epc,
-                on="postcode",
-                how="left",
-                suffixes=("", "_epc"),
-            )
-            merged = pd.concat([matched, fallback], ignore_index=True)
+        check_col = "current_energy_rating" if "current_energy_rating" in epc.columns else None
+        if check_col and check_col in merged.columns and "transaction_id" in merged.columns:
+            unmatched_ids = merged.filter(pl.col(check_col).is_null())["transaction_id"]
+
+            if len(unmatched_ids) > 0:
+                unmatched_sales = sales.filter(
+                    pl.col("transaction_id").is_in(unmatched_ids.to_list())
+                )
+                # Postcode-only fallback for unmatched rows
+                epc_for_fallback = (
+                    epc.drop("_addr_key") if "_addr_key" in epc.columns else epc
+                )
+                fallback = unmatched_sales.drop("_addr_key").join(
+                    epc_for_fallback,
+                    on="postcode",
+                    how="left",
+                    suffix="_epc",
+                )
+                matched = merged.filter(pl.col(check_col).is_not_null())
+                if "_addr_key" in matched.columns:
+                    matched = matched.drop("_addr_key")
+                merged = pl.concat([matched, fallback], how="diagonal_relaxed")
     else:
         # Postcode-only join
-        merged = sales.merge(
-            epc,
-            on="postcode",
-            how="left",
-            suffixes=("", "_epc"),
-        )
+        merged = sales.join(epc, on="postcode", how="left", suffix="_epc")
 
     # Clean up temporary columns
     for col in ["_addr_key", "_addr_key_epc"]:
         if col in merged.columns:
-            merged = merged.drop(columns=[col])
+            merged = merged.drop([col])
 
     # If multiple EPC matches per sale, keep the one closest in time
     if "date_of_transfer" in merged.columns and "inspection_date" in merged.columns:
-        merged["_date_diff"] = abs((merged["date_of_transfer"] - merged["inspection_date"]).dt.days)
+        merged = merged.with_columns(
+            (pl.col("date_of_transfer").cast(pl.Date) - pl.col("inspection_date").cast(pl.Date))
+            .dt.total_days()
+            .abs()
+            .alias("_date_diff")
+        )
+        dedup_subset = (
+            ["transaction_id"] if "transaction_id" in merged.columns else merged.columns[:5]
+        )
         merged = (
-            merged.sort_values("_date_diff")
-            .drop_duplicates(
-                subset=["transaction_id"]
-                if "transaction_id" in merged.columns
-                else merged.columns[:5].tolist(),
-                keep="first",
-            )
-            .drop(columns=["_date_diff"])
+            merged.sort("_date_diff", nulls_last=True)
+            .unique(subset=dedup_subset, keep="first", maintain_order=True)
+            .drop("_date_diff")
         )
 
     match_rate = (
-        merged["current_energy_rating"].notna().mean()
+        merged["current_energy_rating"].is_not_null().mean()
         if "current_energy_rating" in merged.columns
-        else 0
+        else 0.0
     )
     logger.info(
         "Linked dataset: %d rows, EPC match rate: %.1f%%",
@@ -133,9 +127,9 @@ def link_sales_to_epc(
 
 
 def enrich_with_hpi(
-    df: pd.DataFrame,
-    hpi: pd.DataFrame,
-) -> pd.DataFrame:
+    df: pl.DataFrame,
+    hpi: pl.DataFrame,
+) -> pl.DataFrame:
     """Enrich sales+EPC data with area-level UK HPI statistics.
 
     Joins on district/region and year-month to add average area prices
@@ -157,35 +151,36 @@ def enrich_with_hpi(
         return df
 
     # Select useful HPI columns
-    hpi_cols = [hpi_region_col, "date"]
+    hpi_cols = [hpi_region_col, "date"] if "date" in hpi.columns else [hpi_region_col]
     for col in hpi.columns:
         if any(kw in col for kw in ["average_price", "index", "percentage_change", "sales_volume"]):
             hpi_cols.append(col)
-    hpi_cols = list(set(hpi_cols))
-    hpi_subset = hpi[hpi_cols].copy()
+    hpi_cols = list(dict.fromkeys(hpi_cols))  # deduplicate, preserve order
+    hpi_subset = hpi.select(hpi_cols)
 
-    # Create year-month key in both datasets
+    # Create year-month key from date column
     if "date" in hpi_subset.columns:
-        hpi_subset["_hpi_year"] = pd.to_datetime(hpi_subset["date"], errors="coerce").dt.year
-        hpi_subset["_hpi_month"] = pd.to_datetime(hpi_subset["date"], errors="coerce").dt.month
-        hpi_subset = hpi_subset.drop(columns=["date"])
+        hpi_subset = hpi_subset.with_columns([
+            pl.col("date").cast(pl.Date).dt.year().alias("_hpi_year"),
+            pl.col("date").cast(pl.Date).dt.month().alias("_hpi_month"),
+        ]).drop(["date"])
 
     if "year" in df.columns and "month" in df.columns:
-        df = df.copy()
-        # Attempt to match district name to HPI region
-        merged = df.merge(
+        merged = df.join(
             hpi_subset,
             left_on=["district", "year", "month"],
             right_on=[hpi_region_col, "_hpi_year", "_hpi_month"],
             how="left",
-            suffixes=("", "_hpi"),
+            suffix="_hpi",
         )
-        for col in [hpi_region_col, "_hpi_year", "_hpi_month"]:
-            if col in merged.columns and col not in df.columns:
-                merged = merged.drop(columns=[col])
 
+        hpi_price_cols = [c for c in merged.columns if "average_price" in c]
         hpi_match_rate = (
-            merged[[c for c in merged.columns if "average_price" in c]].notna().any(axis=1).mean()
+            merged.select(pl.any_horizontal([pl.col(c).is_not_null() for c in hpi_price_cols]))
+            .to_series()
+            .mean()
+            if hpi_price_cols
+            else 0.0
         )
         logger.info(
             "HPI enrichment: %d rows, match rate: %.1f%%",
@@ -198,7 +193,7 @@ def enrich_with_hpi(
 
 
 def save_dataset(
-    df: pd.DataFrame,
+    df: pl.DataFrame,
     name: str,
     output_dir: Path | None = None,
     fmt: str = "parquet",
@@ -209,30 +204,30 @@ def save_dataset(
         df: DataFrame to save.
         name: Base filename (without extension).
         output_dir: Override output directory.
-        fmt: Output format — "parquet" or "csv".
+        fmt: Output format — "parquet" (default) or "csv".
     """
     out_dir = output_dir or PROCESSED_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if fmt == "parquet":
         dest = out_dir / f"{name}.parquet"
-        df.to_parquet(dest, index=False)
+        df.write_parquet(dest)
     else:
         dest = out_dir / f"{name}.csv"
-        df.to_csv(dest, index=False)
+        df.write_csv(dest)
 
     logger.info("Saved %d rows to %s", len(df), dest)
     return dest
 
 
 def run_pipeline(
-    sales: pd.DataFrame,
-    epc: pd.DataFrame | None = None,
-    hpi: pd.DataFrame | None = None,
+    sales: pl.DataFrame,
+    epc: pl.DataFrame | None = None,
+    hpi: pl.DataFrame | None = None,
     output_name: str = "uk_property_sales",
     output_dir: Path | None = None,
     fmt: str = "parquet",
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     """Run the full data linking pipeline.
 
     Args:
