@@ -87,4 +87,13 @@ target/
 
 # Mypy cache
 .mypy_cache/
-.vscode
+
+# uv
+.venv/
+uv.lock
+
+# Ruff cache
+.ruff_cache/
+
+# pytest cache
+.pytest_cache/
