@@ -2,19 +2,19 @@
 
 Usage:
     # Download and process Land Registry data for a single year:
-    bytes-and-morter download-land-registry --year 2024
+    bytes-and-mortar download-land-registry --year 2024
 
     # Download EPC data for a local authority:
-    bytes-and-morter download-epc --local-authority E09000033
+    bytes-and-mortar download-epc --local-authority E09000033
 
     # Download UK HPI data:
-    bytes-and-morter download-hpi
+    bytes-and-mortar download-hpi
 
     # Run the full pipeline (download + link + save):
-    bytes-and-morter run --year 2024
+    bytes-and-mortar run --year 2024
 
     # Run pipeline on already-downloaded data:
-    bytes-and-morter run --skip-download
+    bytes-and-mortar run --skip-download
 """
 
 from __future__ import annotations

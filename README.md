@@ -1,4 +1,4 @@
-# bytes-and-morter
+# bytes-and-mortar
 
 A data pipeline for UK property valuation, combining Land Registry transactions, Energy Performance Certificates, and House Price Index data.
 
@@ -46,22 +46,22 @@ Register for a free EPC API key at https://epc.opendatacommunities.org/login
 
 ```bash
 # Download Land Registry data for 2024
-uv run bytes-and-morter download-land-registry --year 2024
+uv run bytes-and-mortar download-land-registry --year 2024
 
 # Download EPC data for Westminster
-uv run bytes-and-morter download-epc --local-authority E09000033
+uv run bytes-and-mortar download-epc --local-authority E09000033
 
 # Download UK House Price Index
-uv run bytes-and-morter download-hpi
+uv run bytes-and-mortar download-hpi
 
 # Run the full pipeline (download + clean + link + save)
-uv run bytes-and-morter run --year 2024
+uv run bytes-and-mortar run --year 2024
 
 # Run pipeline on already-downloaded data
-uv run bytes-and-morter run --skip-download
+uv run bytes-and-mortar run --skip-download
 
 # Skip EPC if you don't have an API token
-uv run bytes-and-morter run --year 2024 --skip-epc
+uv run bytes-and-mortar run --year 2024 --skip-epc
 ```
 
 ### Using just
@@ -88,7 +88,7 @@ just clean       # Remove caches and compiled files
 ## Project structure
 
 ```
-bytes-and-morter/
+bytes-and-mortar/
 ├── src/
 │   ├── data/
 │   │   ├── config.py           # URLs, column definitions, data mappings

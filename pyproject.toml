@@ -1,5 +1,5 @@
 [project]
-name = "bytes-and-morter"
+name = "bytes-and-mortar"
 version = "0.1.0"
 description = "A project to predict UK property values using Land Registry, EPC, and UK HPI data"
 authors = [
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-bytes-and-morter = "src.data.make_dataset:app"
+bytes-and-mortar = "src.data.make_dataset:app"
 
 [build-system]
 requires = ["hatchling"]
