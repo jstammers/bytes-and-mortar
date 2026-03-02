@@ -45,8 +45,8 @@ def test_load_parses_columns(source, sample_csv):
 
 def test_load_strips_braces(source, sample_csv):
     df = source.load(filepath=sample_csv)
-    assert df["transaction_id"].iloc[0] == "ABC-123-DEF"
-    assert df["postcode"].iloc[0] == "SW1A 1AA"
+    assert df["transaction_id"][0] == "ABC-123-DEF"
+    assert df["postcode"][0] == "SW1A 1AA"
 
 
 def test_load_with_nrows(source, sample_csv):
@@ -63,20 +63,20 @@ def test_clean_removes_deletions(source, sample_csv):
     df = source.load(filepath=sample_csv)
     cleaned = source.clean(df)
     # Row with record_status "D" should be removed
-    assert "DEL-678-ETE" not in cleaned["transaction_id"].values
+    assert "DEL-678-ETE" not in cleaned["transaction_id"].to_list()
 
 
 def test_clean_removes_missing_postcodes(source, sample_csv):
     df = source.load(filepath=sample_csv)
     cleaned = source.clean(df)
-    assert cleaned["postcode"].notna().all()
+    assert cleaned["postcode"].is_not_null().all()
 
 
 def test_clean_removes_non_residential(source, sample_csv):
     df = source.load(filepath=sample_csv)
     cleaned = source.clean(df)
     # Property type "O" should be removed
-    assert "O" not in cleaned["property_type"].values
+    assert "O" not in cleaned["property_type"].to_list()
 
 
 def test_clean_filters_extreme_prices(source, sample_csv):
@@ -100,7 +100,7 @@ def test_clean_adds_year_month(source, sample_csv):
     cleaned = source.clean(df)
     assert "year" in cleaned.columns
     assert "month" in cleaned.columns
-    assert cleaned["year"].iloc[0] == 2024
+    assert cleaned["year"][0] == 2024
 
 
 def test_clean_adds_outward_postcode(source, sample_csv):
@@ -108,7 +108,7 @@ def test_clean_adds_outward_postcode(source, sample_csv):
     cleaned = source.clean(df)
     assert "postcode_outward" in cleaned.columns
     # SW1A 1AA -> SW1A
-    assert "SW1A" in cleaned["postcode_outward"].values
+    assert "SW1A" in cleaned["postcode_outward"].to_list()
 
 
 def test_download_url_for_year(source):

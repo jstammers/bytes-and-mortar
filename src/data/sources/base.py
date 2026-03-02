@@ -4,7 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 import requests
 from tqdm import tqdm
 
@@ -27,14 +27,14 @@ class DataSource(ABC):
         """Download raw data from the source. Returns path to downloaded file."""
 
     @abstractmethod
-    def load(self, filepath: Path | None = None, **kwargs) -> pd.DataFrame:
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.DataFrame:
         """Load and parse the raw data into a DataFrame."""
 
     @abstractmethod
-    def clean(self, df: pd.DataFrame) -> pd.DataFrame:
+    def clean(self, df: pl.DataFrame) -> pl.DataFrame:
         """Apply source-specific cleaning and standardisation."""
 
-    def ingest(self, **kwargs) -> pd.DataFrame:
+    def ingest(self, **kwargs) -> pl.DataFrame:
         """Full pipeline: download, load, and clean."""
         logger.info("Starting ingestion for %s", self.name)
         filepath = self.download(**kwargs)

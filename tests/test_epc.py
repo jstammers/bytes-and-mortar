@@ -1,6 +1,6 @@
 """Tests for EPC data source."""
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from src.data.sources.epc import EPCData
@@ -59,7 +59,7 @@ def test_clean_filters_invalid_ratings(source, sample_epc_csv):
     df = source.load(filepath=sample_epc_csv)
     cleaned = source.clean(df)
     valid_ratings = {"A", "B", "C", "D", "E", "F", "G"}
-    assert cleaned["current_energy_rating"].isin(valid_ratings).all()
+    assert cleaned["current_energy_rating"].is_in(valid_ratings).all()
 
 
 def test_clean_deduplicates_by_building_ref(source, sample_epc_csv):
@@ -67,22 +67,22 @@ def test_clean_deduplicates_by_building_ref(source, sample_epc_csv):
     df = source.load(filepath=sample_epc_csv)
     cleaned = source.clean(df)
     # BRN001 appears twice; only the newer one (2023-06-15) should remain
-    brn001 = cleaned[cleaned["building_reference_number"] == "BRN001"]
+    brn001 = cleaned.filter(pl.col("building_reference_number") == "BRN001")
     assert len(brn001) == 1
-    assert brn001["inspection_date"].iloc[0].year == 2023
+    assert brn001["inspection_date"][0].year == 2023
 
 
 def test_clean_drops_missing_postcodes(source, sample_epc_csv):
     df = source.load(filepath=sample_epc_csv)
     cleaned = source.clean(df)
-    assert cleaned["postcode"].notna().all()
+    assert cleaned["postcode"].is_not_null().all()
 
 
 def test_clean_numeric_conversions(source, sample_epc_csv):
     df = source.load(filepath=sample_epc_csv)
     cleaned = source.clean(df)
-    assert pd.api.types.is_numeric_dtype(cleaned["current_energy_efficiency"])
-    assert pd.api.types.is_numeric_dtype(cleaned["total_floor_area"])
+    assert cleaned["current_energy_efficiency"].dtype.is_numeric()
+    assert cleaned["total_floor_area"].dtype.is_numeric()
 
 
 def test_no_api_token_warning(tmp_raw_dir, monkeypatch):

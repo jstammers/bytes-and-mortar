@@ -1,6 +1,8 @@
 """Tests for the data linking pipeline."""
 
-import pandas as pd
+from datetime import date
+
+import polars as pl
 import pytest
 
 from src.data.pipeline import (
@@ -15,11 +17,11 @@ from src.data.pipeline import (
 @pytest.fixture
 def sales_df():
     """Sample Land Registry sales data."""
-    return pd.DataFrame(
+    return pl.DataFrame(
         {
             "transaction_id": ["T001", "T002", "T003"],
             "price": [250000, 450000, 180000],
-            "date_of_transfer": pd.to_datetime(["2024-01-15", "2024-02-20", "2024-03-10"]),
+            "date_of_transfer": [date(2024, 1, 15), date(2024, 2, 20), date(2024, 3, 10)],
             "postcode": ["SW1A 1AA", "E1 6AN", "N1 9GU"],
             "property_type": ["D", "F", "T"],
             "paon": ["10", "5", "12"],
@@ -34,14 +36,14 @@ def sales_df():
 @pytest.fixture
 def epc_df():
     """Sample EPC data (already cleaned with snake_case columns)."""
-    return pd.DataFrame(
+    return pl.DataFrame(
         {
             "postcode": ["SW1A 1AA", "E1 6AN", "W1A 1AB"],
             "address1": ["10 DOWNING STREET", "5 COMMERCIAL STREET", "3 OXFORD STREET"],
             "current_energy_rating": ["C", "B", "D"],
             "current_energy_efficiency": [70, 82, 55],
             "total_floor_area": [200.0, 65.0, 90.0],
-            "inspection_date": pd.to_datetime(["2023-06-15", "2023-09-20", "2022-01-01"]),
+            "inspection_date": [date(2023, 6, 15), date(2023, 9, 20), date(2022, 1, 1)],
         }
     )
 
@@ -49,11 +51,11 @@ def epc_df():
 @pytest.fixture
 def hpi_df():
     """Sample UK HPI data (already cleaned)."""
-    return pd.DataFrame(
+    return pl.DataFrame(
         {
             "regionname": ["Westminster", "Tower Hamlets", "Islington", "Westminster"],
-            "date": pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01", "2024-02-01"]),
-            "averageprice": [950000, 450000, 550000, 960000],
+            "date": [date(2024, 1, 1), date(2024, 2, 1), date(2024, 3, 1), date(2024, 2, 1)],
+            "averageprice": [950000.0, 450000.0, 550000.0, 960000.0],
             "index": [180.3, 140.2, 155.8, 181.1],
         }
     )
@@ -61,22 +63,22 @@ def hpi_df():
 
 class TestNormaliseAddress:
     def test_basic(self):
-        paon = pd.Series(["10"])
-        street = pd.Series(["Downing Street"])
+        paon = pl.Series(["10"])
+        street = pl.Series(["Downing Street"])
         result = normalise_address(paon, street)
-        assert result.iloc[0] == "10 DOWNING STREET"
+        assert result[0] == "10 DOWNING STREET"
 
     def test_handles_na(self):
-        paon = pd.Series([None])
-        street = pd.Series(["HIGH STREET"])
+        paon = pl.Series([None], dtype=pl.String)
+        street = pl.Series(["HIGH STREET"])
         result = normalise_address(paon, street)
-        assert result.iloc[0] == "HIGH STREET"
+        assert result[0] == "HIGH STREET"
 
     def test_collapses_whitespace(self):
-        paon = pd.Series(["10"])
-        street = pd.Series(["DOWNING   STREET"])
+        paon = pl.Series(["10"])
+        street = pl.Series(["DOWNING   STREET"])
         result = normalise_address(paon, street)
-        assert "  " not in result.iloc[0]
+        assert "  " not in result[0]
 
 
 class TestLinkSalesToEPC:
@@ -86,18 +88,18 @@ class TestLinkSalesToEPC:
         assert "current_energy_rating" in result.columns
 
     def test_left_join_retains_unmatched(self, sales_df, epc_df):
-        """Sales without EPC matches should be retained with NaN."""
+        """Sales without EPC matches should be retained with null."""
         result = link_sales_to_epc(sales_df, epc_df)
         # T003 (N1 9GU) has no EPC match
-        t003 = result[result["transaction_id"] == "T003"]
+        t003 = result.filter(pl.col("transaction_id") == "T003")
         assert len(t003) >= 1
 
     def test_matched_records_have_epc(self, sales_df, epc_df):
         result = link_sales_to_epc(sales_df, epc_df)
-        t001 = result[result["transaction_id"] == "T001"]
+        t001 = result.filter(pl.col("transaction_id") == "T001")
         assert len(t001) >= 1
         # SW1A 1AA should match
-        assert t001["current_energy_rating"].iloc[0] == "C"
+        assert t001["current_energy_rating"][0] == "C"
 
 
 class TestEnrichWithHPI:
@@ -109,7 +111,7 @@ class TestEnrichWithHPI:
 
     def test_returns_df_without_region_columns(self, sales_df):
         """If HPI has no region column, return data unchanged."""
-        bad_hpi = pd.DataFrame({"foo": [1], "bar": [2]})
+        bad_hpi = pl.DataFrame({"foo": [1], "bar": [2]})
         result = enrich_with_hpi(sales_df, bad_hpi)
         assert len(result) == len(sales_df)
 
@@ -119,7 +121,7 @@ class TestSaveDataset:
         dest = save_dataset(sales_df, "test_output", output_dir=tmp_path, fmt="parquet")
         assert dest.exists()
         assert dest.suffix == ".parquet"
-        loaded = pd.read_parquet(dest)
+        loaded = pl.read_parquet(dest)
         assert len(loaded) == len(sales_df)
 
     def test_save_csv(self, sales_df, tmp_path):

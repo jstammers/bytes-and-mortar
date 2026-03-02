@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from src.data.sources.uk_hpi import UKHousePriceIndex
@@ -59,7 +59,7 @@ def test_clean_parses_dates(source, sample_hpi_csv):
     cleaned = source.clean(df)
     assert "year" in cleaned.columns
     assert "month" in cleaned.columns
-    assert pd.api.types.is_datetime64_any_dtype(cleaned["date"])
+    assert cleaned["date"].dtype == pl.Date
 
 
 def test_clean_drops_empty_rows(source, sample_hpi_csv):
@@ -72,8 +72,8 @@ def test_clean_drops_empty_rows(source, sample_hpi_csv):
 def test_clean_numeric_columns(source, sample_hpi_csv):
     df = source.load(filepath=sample_hpi_csv)
     cleaned = source.clean(df)
-    assert pd.api.types.is_numeric_dtype(cleaned["averageprice"])
-    assert pd.api.types.is_numeric_dtype(cleaned["index"])
+    assert cleaned["averageprice"].dtype.is_numeric()
+    assert cleaned["index"].dtype.is_numeric()
 
 
 def test_get_area_prices(source, sample_hpi_csv):
