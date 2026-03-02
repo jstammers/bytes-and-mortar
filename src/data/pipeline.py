@@ -111,11 +111,13 @@ def link_sales_to_epc(
             .drop("_date_diff")
         )
 
-    match_rate = float(
+    # Series.mean() has a broad return type in polars stubs; narrow to float explicitly.
+    _mr = (
         merged["current_energy_rating"].is_not_null().mean()
         if "current_energy_rating" in merged.columns
-        else 0.0
+        else None
     )
+    match_rate: float = _mr if isinstance(_mr, float) else 0.0
     logger.info(
         "Linked dataset: %d rows, EPC match rate: %.1f%%",
         len(merged),
@@ -175,13 +177,14 @@ def enrich_with_hpi(
         )
 
         hpi_price_cols = [c for c in merged.columns if "average_price" in c]
-        hpi_match_rate = (
+        _hm = (
             merged.select(pl.any_horizontal([pl.col(c).is_not_null() for c in hpi_price_cols]))
             .to_series()
             .mean()
             if hpi_price_cols
-            else 0.0
+            else None
         )
+        hpi_match_rate: float = _hm if isinstance(_hm, float) else 0.0
         logger.info(
             "HPI enrichment: %d rows, match rate: %.1f%%",
             len(merged),

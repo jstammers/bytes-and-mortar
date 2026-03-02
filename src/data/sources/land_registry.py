@@ -165,10 +165,13 @@ class LandRegistryPricePaid(DataSource):
 
         Useful when the complete file is too large for memory.
         """
+        # read_csv_batched lacks a `schema` param; use new_columns + infer_schema_length=0
+        # so all columns are read as String (matching the load() approach).
         reader = pl.read_csv_batched(
             filepath,
             has_header=False,
-            schema=_LR_SCHEMA,
+            new_columns=LAND_REGISTRY_COLUMNS,
+            infer_schema_length=0,
             batch_size=chunk_size,
         )
         while True:
