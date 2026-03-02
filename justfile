@@ -1,4 +1,4 @@
-# bytes-and-morter justfile
+# bytes-and-mortar justfile
 # Run `just` or `just --list` to see available commands
 
 # Install all dependencies (including dev)
@@ -44,16 +44,16 @@ clean:
 
 # Download Land Registry data for a given year
 download-lr year='':
-    uv run bytes-and-morter download-land-registry {{ if year != '' { "--year " + year } else { "" } }}
+    uv run bytes-and-mortar download-land-registry {{ if year != '' { "--year " + year } else { "" } }}
 
 # Download EPC data for a local authority
 download-epc la='':
-    uv run bytes-and-morter download-epc {{ if la != '' { "--local-authority " + la } else { "" } }}
+    uv run bytes-and-mortar download-epc {{ if la != '' { "--local-authority " + la } else { "" } }}
 
 # Download UK House Price Index data
 download-hpi:
-    uv run bytes-and-morter download-hpi
+    uv run bytes-and-mortar download-hpi
 
 # Run the full ingestion pipeline
 run *args='':
-    uv run bytes-and-morter run {{ args }}
+    uv run bytes-and-mortar run {{ args }}

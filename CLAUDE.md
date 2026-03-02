@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides context to Claude Code about the bytes-and-morter project.
+This file provides context to Claude Code about the bytes-and-mortar project.
 
 ## Project overview
 
