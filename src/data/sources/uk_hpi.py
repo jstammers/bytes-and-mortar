@@ -37,12 +37,35 @@ class UKHousePriceIndex(DataSource):
         return self._download_file(download_url, dest, desc="UK HPI")
 
     def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
-        """Build a lazy scan of the UK HPI CSV.
+        """Build a lazy scan of the UK HPI data.
+
+        Prefers a parquet file over CSV when available.  Pass an explicit
+        *filepath* to override the default file-discovery logic.
 
         The data is not read into memory until the lazy plan is collected.
+
+        Args:
+            filepath: Path to a ``.parquet`` or ``.csv`` file.  When *None* the
+                method looks for ``uk_hpi_full.parquet`` first, then falls back
+                to ``uk_hpi_full.csv``.  When a ``.csv`` path is supplied and a
+                same-stem ``.parquet`` exists alongside it, the parquet is used
+                transparently.
         """
         if filepath is None:
-            filepath = self.raw_dir / "uk_hpi_full.csv"
+            parquet = self.raw_dir / "uk_hpi_full.parquet"
+            csv = self.raw_dir / "uk_hpi_full.csv"
+            if parquet.exists():
+                filepath = parquet
+            elif csv.exists():
+                filepath = csv
+            else:
+                raise FileNotFoundError(
+                    f"UK HPI data not found in {self.raw_dir}. Run download() first."
+                )
+        elif filepath.suffix == ".csv":
+            parquet = filepath.with_suffix(".parquet")
+            if parquet.exists():
+                filepath = parquet
 
         if not filepath.exists():
             raise FileNotFoundError(
@@ -50,6 +73,10 @@ class UKHousePriceIndex(DataSource):
             )
 
         logger.info("Building lazy scan of UK HPI data from %s", filepath)
+
+        if filepath.suffix == ".parquet":
+            return pl.scan_parquet(filepath)
+
         return pl.scan_csv(filepath, infer_schema_length=10000)
 
     def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -64,9 +91,12 @@ class UKHousePriceIndex(DataSource):
         lf = lf.rename(rename_map)
         col_names = [rename_map.get(c, c) for c in col_names]
 
-        # Parse date column — UK HPI uses DD/MM/YYYY format.
+        # Parse date column — UK HPI uses DD/MM/YYYY format in CSV.
+        # When loaded from parquet the column is already a Date; skip str.to_date()
+        # in that case to avoid calling the string accessor on a non-string dtype.
         if "date" in col_names:
-            lf = lf.with_columns(pl.col("date").str.to_date(format="%d/%m/%Y", strict=False))
+            if lf.collect_schema().get("date") == pl.String:
+                lf = lf.with_columns(pl.col("date").str.to_date(format="%d/%m/%Y", strict=False))
             lf = lf.with_columns(
                 [
                     pl.col("date").dt.year().alias("year"),

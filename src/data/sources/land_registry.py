@@ -68,16 +68,38 @@ class LandRegistryPricePaid(DataSource):
         nrows: int | None = None,
         **kwargs,
     ) -> pl.LazyFrame:
-        """Build a lazy scan of the Price Paid CSV.
+        """Build a lazy scan of the Price Paid Data.
+
+        Prefers a parquet file over CSV when available — parquet is smaller and
+        loads significantly faster.  Pass an explicit *filepath* to override the
+        default file-discovery logic.
 
         The data is not read into memory until the lazy plan is collected.
 
         Args:
-            filepath: Path to the CSV file. Defaults to complete file.
+            filepath: Path to a ``.parquet`` or ``.csv`` file.  When *None* the
+                method looks for ``pp-complete.parquet`` in ``raw_dir`` first,
+                then falls back to ``pp-complete.csv``.  When a ``.csv`` path is
+                supplied and a same-stem ``.parquet`` exists alongside it, the
+                parquet is used transparently.
             nrows: Limit number of rows scanned (useful for testing).
         """
         if filepath is None:
-            filepath = self.raw_dir / "pp-complete.csv"
+            parquet = self.raw_dir / "pp-complete.parquet"
+            csv = self.raw_dir / "pp-complete.csv"
+            if parquet.exists():
+                filepath = parquet
+            elif csv.exists():
+                filepath = csv
+            else:
+                raise FileNotFoundError(
+                    f"Price Paid Data not found in {self.raw_dir}. Run download() first."
+                )
+        elif filepath.suffix == ".csv":
+            # Transparently prefer a parquet alongside the given CSV.
+            parquet = filepath.with_suffix(".parquet")
+            if parquet.exists():
+                filepath = parquet
 
         if not filepath.exists():
             raise FileNotFoundError(
@@ -85,6 +107,12 @@ class LandRegistryPricePaid(DataSource):
             )
 
         logger.info("Building lazy scan of Price Paid Data from %s", filepath)
+
+        if filepath.suffix == ".parquet":
+            lf = pl.scan_parquet(filepath)
+            if nrows is not None:
+                lf = lf.head(nrows)
+            return lf
 
         # The Land Registry CSV has no header row; all values are braces-wrapped strings.
         # Use an explicit string schema so we can strip braces lazily before casting.

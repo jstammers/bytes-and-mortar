@@ -163,7 +163,11 @@ class EPCData(DataSource):
         if bulk_file is None:
             bulk_file = "all-domestic-certificates.zip"
 
-        # Check if file is already extracted
+        # Return early if bulk data already exists (prefer parquet).
+        parquet_path = self.raw_dir / "epc_domestic_bulk.parquet"
+        if parquet_path.exists():
+            logger.info("EPC bulk data already exists: %s", parquet_path)
+            return parquet_path
         csv_path = self.raw_dir / "epc_domestic_bulk.csv"
         if csv_path.exists():
             logger.info("EPC bulk data already exists: %s", csv_path)
@@ -218,28 +222,26 @@ class EPCData(DataSource):
         if not extracted_csvs:
             raise RuntimeError(f"No CSV files found after extracting {bulk_file}")
 
-        if len(extracted_csvs) == 1:
-            shutil.move(str(extracted_csvs[0]), str(csv_path))
-        else:
-            logger.info("Merging %d CSV files into %s", len(extracted_csvs), csv_path)
-
-            dfs = [
-                pl.read_csv(
-                    csv_file,
-                    schema=EPC_DOMESTIC_SCHEMA,
-                    null_values=["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"],
-                )
-                for csv_file in extracted_csvs
-            ]
-            merged_df = pl.concat(dfs, how="diagonal_relaxed")
-            merged_df.write_csv(csv_path)
+        logger.info(
+            "Converting %d CSV file(s) to parquet: %s", len(extracted_csvs), parquet_path
+        )
+        dfs = [
+            pl.read_csv(
+                csv_file,
+                schema=EPC_DOMESTIC_SCHEMA,
+                null_values=["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"],
+            )
+            for csv_file in extracted_csvs
+        ]
+        merged_df = pl.concat(dfs, how="diagonal_relaxed") if len(dfs) > 1 else dfs[0]
+        merged_df.write_parquet(parquet_path)
 
         # Cleanup
         shutil.rmtree(temp_extract, ignore_errors=True)
         zip_path.unlink()
 
-        logger.info("Saved EPC bulk data to %s", csv_path)
-        return csv_path
+        logger.info("Saved EPC bulk data to %s", parquet_path)
+        return parquet_path
 
     def _search_with_filters(
         self,
@@ -262,11 +264,15 @@ class EPCData(DataSource):
         if from_month:
             params["from-month"] = from_month
 
-        dest = self.raw_dir / ("_".join(filename_parts) + ".csv")
+        dest = self.raw_dir / ("_".join(filename_parts) + ".parquet")
+        dest_csv = self.raw_dir / ("_".join(filename_parts) + ".csv")
 
         if dest.exists():
             logger.info("EPC search data already exists: %s", dest)
             return dest
+        if dest_csv.exists():
+            logger.info("EPC search data already exists: %s", dest_csv)
+            return dest_csv
 
         all_rows = []
         for page in range(max_pages):
@@ -306,16 +312,20 @@ class EPCData(DataSource):
             lines.extend(chunk_lines[1:])
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("\n".join(lines))
+        pl.read_csv(BytesIO("\n".join(lines).encode())).write_parquet(dest)
         logger.info("Saved EPC search data to %s", dest)
         return dest
 
     def _search_by_postcodes(self, postcodes: list[str], max_pages: int) -> Path:
         """Download EPC data for a list of postcodes using search API."""
-        dest = self.raw_dir / "epc_domestic_postcodes.csv"
+        dest = self.raw_dir / "epc_domestic_postcodes.parquet"
+        dest_csv = self.raw_dir / "epc_domestic_postcodes.csv"
         if dest.exists():
             logger.info("EPC postcode data already exists: %s", dest)
             return dest
+        if dest_csv.exists():
+            logger.info("EPC postcode data already exists: %s", dest_csv)
+            return dest_csv
 
         all_dfs = []
         for postcode in postcodes:
@@ -345,23 +355,47 @@ class EPCData(DataSource):
             raise RuntimeError("No EPC data returned for given postcodes.")
 
         df = pl.concat(all_dfs, how="diagonal_relaxed")
-        df.write_csv(dest)
+        df.write_parquet(dest)
         logger.info("Saved EPC data for %d postcodes to %s", len(postcodes), dest)
         return dest
 
     def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
-        """Build a lazy scan of the EPC CSV.
+        """Build a lazy scan of the EPC data.
+
+        Prefers a parquet file over CSV when available.  Pass an explicit
+        *filepath* to override the default file-discovery logic.
 
         The data is not read into memory until the lazy plan is collected.
+
+        Args:
+            filepath: Path to a ``.parquet`` or ``.csv`` file.  When *None* the
+                method globs ``epc_domestic*.parquet`` first, then falls back to
+                ``epc_domestic*.csv``.  When a ``.csv`` path is supplied and a
+                same-stem ``.parquet`` exists alongside it, the parquet is used
+                transparently.
         """
         if filepath is None:
-            # Find the most recent EPC file
-            epc_files = sorted(self.raw_dir.glob("epc_domestic*.csv"))
-            if not epc_files:
+            parquet_files = sorted(self.raw_dir.glob("epc_domestic*.parquet"))
+            csv_files = sorted(self.raw_dir.glob("epc_domestic*.csv"))
+            if parquet_files:
+                filepath = parquet_files[-1]
+            elif csv_files:
+                filepath = csv_files[-1]
+            else:
                 raise FileNotFoundError("No EPC data files found. Run download() first.")
-            filepath = epc_files[-1]
+        elif filepath.suffix == ".csv":
+            parquet = filepath.with_suffix(".parquet")
+            if parquet.exists():
+                filepath = parquet
+
+        if not filepath.exists():
+            raise FileNotFoundError(f"EPC data file not found: {filepath}. Run download() first.")
 
         logger.info("Building lazy scan of EPC data from %s", filepath)
+
+        if filepath.suffix == ".parquet":
+            return pl.scan_parquet(filepath)
+
         return pl.scan_csv(
             filepath,
             schema_overrides=_EPC_SCAN_OVERRIDES,

@@ -164,7 +164,7 @@ def test_download_search_when_requested(mock_get, source, tmp_raw_dir):
     assert any("domestic/search" in str(call) for call in calls), (
         "Should call the search endpoint when use_search=True"
     )
-    assert result.name == "epc_domestic_E09000033.csv"
+    assert result.name == "epc_domestic_E09000033.parquet"
 
 
 def test_list_available_files_requires_token(tmp_raw_dir, monkeypatch):
