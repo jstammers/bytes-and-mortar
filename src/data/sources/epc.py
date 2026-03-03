@@ -397,11 +397,13 @@ class EPCData(DataSource):
                 .str.replace_all(r"\s+", " ")
             )
 
-        # Parse inspection_date
+        # Parse inspection_date when loaded as string; keep typed date columns as-is.
         if "inspection_date" in col_names:
-            lf = lf.with_columns(
-                pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
-            )
+            inspection_dtype = lf.collect_schema().get("inspection_date")
+            if inspection_dtype == pl.String:
+                lf = lf.with_columns(
+                    pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
+                )
 
         # Numeric conversions
         numeric_cols = [
