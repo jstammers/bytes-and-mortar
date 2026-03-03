@@ -197,6 +197,32 @@ class TestSaveDataset:
         assert dest.exists()
         assert dest.suffix == ".csv"
 
+    def test_save_parquet_partitioned(self, sales_df, tmp_path):
+        """DataFrame with partition_by writes a hive-partitioned directory."""
+        dest = save_dataset(
+            sales_df, "test_part", output_dir=tmp_path, fmt="parquet", partition_by=["year"]
+        )
+        assert dest.is_dir()
+        parquet_files = list(dest.rglob("*.parquet"))
+        assert parquet_files, "Expected at least one parquet file in partitioned output"
+        loaded = pl.concat([pl.read_parquet(f) for f in parquet_files])
+        assert len(loaded) == len(sales_df)
+
+    def test_save_lazy_parquet_partitioned(self, sales_df, tmp_path):
+        """LazyFrame with partition_by writes a hive-partitioned directory."""
+        dest = save_dataset(
+            sales_df.lazy(),
+            "test_part_lazy",
+            output_dir=tmp_path,
+            fmt="parquet",
+            partition_by=["year"],
+        )
+        assert dest.is_dir()
+        parquet_files = list(dest.rglob("*.parquet"))
+        assert parquet_files, "Expected at least one parquet file in partitioned output"
+        loaded = pl.concat([pl.read_parquet(f) for f in parquet_files])
+        assert len(loaded) == len(sales_df)
+
 
 class TestRunPipeline:
     def test_sales_only(self, sales_df, tmp_path):
