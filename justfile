@@ -57,3 +57,11 @@ download-hpi:
 # Run the full ingestion pipeline
 run *args='':
     uv run bytes-and-mortar run {{ args }}
+
+# Create M19 postcode fixtures for integration tests (requires data/raw/ files)
+create-fixtures src_dir='':
+    PYTHONPATH=. uv run python scripts/create_m19_fixtures.py {{ if src_dir != '' { "--src-dir " + src_dir } else { "" } }}
+
+# Run integration tests only (requires fixtures — run create-fixtures first)
+test-integration *args='':
+    uv run pytest tests/test_integration_pipeline.py -m integration -v {{ args }}

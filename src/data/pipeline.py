@@ -191,7 +191,21 @@ def enrich_with_hpi(
     if "date" in hpi_cols:
         keep_hpi_cols.append("date")
     for col in hpi_cols:
-        if any(kw in col for kw in ["average_price", "index", "percentage_change", "sales_volume"]):
+        # Match against both underscore-separated and camelCase-collapsed column names.
+        # clean() lowercases and strips spaces but does NOT add underscores to CamelCase:
+        # e.g. AveragePrice → averageprice, SalesVolume → salesvolume, 1m%Change → 1m%change.
+        if any(
+            kw in col
+            for kw in [
+                "average_price",
+                "averageprice",
+                "index",
+                "percentage_change",
+                "%change",
+                "sales_volume",
+                "salesvolume",
+            ]
+        ):
             keep_hpi_cols.append(col)
     keep_hpi_cols = list(dict.fromkeys(keep_hpi_cols))  # deduplicate, preserve order
     hpi_subset = hpi_lf.select(keep_hpi_cols)
@@ -208,6 +222,11 @@ def enrich_with_hpi(
     if "year" not in lf_cols or "month" not in lf_cols:
         logger.warning("Cannot enrich with HPI: sales data missing 'year'/'month' columns.")
         return lf
+
+    # LR stores district in uppercase (e.g. "MANCHESTER"); HPI uses title case ("Manchester").
+    # Normalise both to uppercase so the join key matches.
+    lf = lf.with_columns(pl.col("district").str.to_uppercase())
+    hpi_subset = hpi_subset.with_columns(pl.col(hpi_region_col).str.to_uppercase())
 
     enriched = lf.join(
         hpi_subset,
