@@ -222,9 +222,7 @@ class EPCData(DataSource):
         if not extracted_csvs:
             raise RuntimeError(f"No CSV files found after extracting {bulk_file}")
 
-        logger.info(
-            "Converting %d CSV file(s) to parquet: %s", len(extracted_csvs), parquet_path
-        )
+        logger.info("Converting %d CSV file(s) to parquet: %s", len(extracted_csvs), parquet_path)
         dfs = [
             pl.read_csv(
                 csv_file,
