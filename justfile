@@ -57,3 +57,23 @@ download-hpi:
 # Run the full ingestion pipeline
 run *args='':
     uv run bytes-and-mortar run {{ args }}
+
+# Install app (API) dependencies
+install-app:
+    uv sync --extra app
+
+# Start the FastAPI development server
+dev-api:
+    uv run uvicorn src.app.main:app --reload --port 8000
+
+# Install frontend dependencies
+install-frontend:
+    cd frontend && npm install
+
+# Start the frontend development server (requires install-frontend first)
+dev-frontend:
+    cd frontend && npm run dev
+
+# Build frontend for production
+build-frontend:
+    cd frontend && npm run build

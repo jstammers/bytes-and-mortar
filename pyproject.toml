@@ -26,6 +26,11 @@ dev = [
     "ruff>=0.11",
     "ty>=0.0.1a6",
 ]
+app = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "numpy>=1.26",
+]
 
 [project.scripts]
 bytes-and-mortar = "src.data.make_dataset:app"
