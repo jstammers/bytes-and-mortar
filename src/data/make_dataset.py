@@ -4,8 +4,14 @@ Usage:
     # Download and process Land Registry data for a single year:
     bytes-and-mortar download-land-registry --year 2024
 
-    # Download EPC data for a local authority:
-    bytes-and-mortar download-epc --local-authority E09000033
+    # Download entire EPC dataset (bulk):
+    bytes-and-mortar download-epc
+
+    # Download EPC data for a specific local authority (search API):
+    bytes-and-mortar download-epc --use-search --local-authority E09000033
+
+    # Download EPC data for postcodes (search API):
+    bytes-and-mortar download-epc --use-search --postcodes "SW1A 1AA,E1 6AN"
 
     # Download UK HPI data:
     bytes-and-mortar download-hpi
@@ -62,21 +68,43 @@ def download_land_registry(
 
 @app.command()
 def download_epc(
+    use_search: Annotated[
+        bool, typer.Option(help="Use search API instead of bulk download.")
+    ] = False,
+    bulk_file: Annotated[
+        str | None,
+        typer.Option(
+            help="Specific bulk file to download (e.g., 'all-domestic-certificates.zip'). "
+            "Only used when use_search=False."
+        ),
+    ] = None,
     local_authority: Annotated[
-        str | None, typer.Option(help="Local authority code (e.g. E09000033 for Westminster).")
+        str | None,
+        typer.Option(
+            help="Local authority code (e.g. E09000033 for Westminster). "
+            "Only used when use_search=True."
+        ),
     ] = None,
     postcodes: Annotated[
-        str | None, typer.Option(help="Comma-separated postcodes to query.")
+        str | None,
+        typer.Option(help="Comma-separated postcodes to query. Only used when use_search=True."),
     ] = None,
     from_year: Annotated[
-        int | None, typer.Option(help="Fetch EPCs from this year onwards.")
+        int | None,
+        typer.Option(help="Fetch EPCs from this year onwards. Only used when use_search=True."),
     ] = None,
-    max_pages: Annotated[int, typer.Option(help="Maximum number of pages to fetch.")] = 10,
+    max_pages: Annotated[
+        int, typer.Option(help="Maximum number of pages to fetch (search API only).")
+    ] = 10,
     output_dir: Annotated[
         Path | None, typer.Option(help="Override raw data output directory.")
     ] = None,
 ) -> None:
-    """Download EPC (Energy Performance Certificate) data."""
+    """Download EPC (Energy Performance Certificate) data.
+
+    By default, downloads the entire dataset via bulk file.
+    Use --use-search to download filtered data instead.
+    """
     logger = logging.getLogger(__name__)
     raw = output_dir if output_dir else RAW_DIR
     source = EPCData(raw_dir=raw)
@@ -86,6 +114,8 @@ def download_epc(
         postcode_list = [p.strip() for p in postcodes.split(",")]
 
     filepath = source.download(
+        use_search=use_search,
+        bulk_file=bulk_file,
         postcodes=postcode_list,
         local_authority=local_authority,
         from_year=from_year,
@@ -113,7 +143,8 @@ def download_hpi(
 @app.command()
 def run(
     year: Annotated[
-        int | None, typer.Option(help="Land Registry year to process. Omit for complete history.")
+        int | None,
+        typer.Option(help="Land Registry year to process. Omit for complete history."),
     ] = None,
     nrows: Annotated[
         int | None, typer.Option(help="Limit rows loaded (useful for testing).")
