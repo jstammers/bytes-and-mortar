@@ -64,9 +64,9 @@ class UKHousePriceIndex(DataSource):
         lf = lf.rename(rename_map)
         col_names = [rename_map.get(c, c) for c in col_names]
 
-        # Parse date column
+        # Parse date column — UK HPI uses DD/MM/YYYY format.
         if "date" in col_names:
-            lf = lf.with_columns(pl.col("date").str.to_date(format="%Y-%m-%d", strict=False))
+            lf = lf.with_columns(pl.col("date").str.to_date(format="%d/%m/%Y", strict=False))
             lf = lf.with_columns(
                 [
                     pl.col("date").dt.year().alias("year"),

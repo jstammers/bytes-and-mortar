@@ -31,6 +31,15 @@ import requests
 from src.data.config import EPC_DOMESTIC_SCHEMA, EPC_DOMESTIC_SEARCH
 from src.data.sources.base import DataSource
 
+_EPC_NULL_VALUES = ["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"]
+
+# Force string typing for columns that polars might infer as int/float from schema inference.
+# Date and numeric columns are intentionally excluded: clean() parses them from their
+# string CSV representations, and pre-typing them here would break clean()'s str.to_date() calls.
+_EPC_SCAN_OVERRIDES: dict[str, type[pl.DataType]] = {
+    col: dtype for col, dtype in EPC_DOMESTIC_SCHEMA.items() if dtype in (pl.Utf8, pl.String)
+}
+
 logger = logging.getLogger(__name__)
 
 # EPC API endpoints
@@ -353,7 +362,11 @@ class EPCData(DataSource):
             filepath = epc_files[-1]
 
         logger.info("Building lazy scan of EPC data from %s", filepath)
-        return pl.scan_csv(filepath, infer_schema_length=10000)
+        return pl.scan_csv(
+            filepath,
+            schema_overrides=_EPC_SCAN_OVERRIDES,
+            null_values=_EPC_NULL_VALUES,
+        )
 
     def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """Clean and standardise EPC data (lazy).
