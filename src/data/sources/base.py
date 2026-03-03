@@ -27,26 +27,19 @@ class DataSource(ABC):
         """Download raw data from the source. Returns path to downloaded file."""
 
     @abstractmethod
-    def load(self, filepath: Path | None = None, **kwargs) -> pl.DataFrame:
-        """Load and parse the raw data into a DataFrame."""
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
+        """Load and parse the raw data into a LazyFrame (no data read yet)."""
 
     @abstractmethod
-    def clean(self, df: pl.DataFrame) -> pl.DataFrame:
+    def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """Apply source-specific cleaning and standardisation."""
 
-    def ingest(self, **kwargs) -> pl.DataFrame:
-        """Full pipeline: download, load, and clean."""
-        logger.info("Starting ingestion for %s", self.name)
+    def ingest(self, **kwargs) -> pl.LazyFrame:
+        """Full pipeline: download, load, and clean. Returns a lazy plan."""
+        logger.info("Building ingestion plan for %s", self.name)
         filepath = self.download(**kwargs)
-        df = self.load(filepath, **kwargs)
-        df = self.clean(df)
-        logger.info(
-            "Ingestion complete for %s: %d rows, %d columns",
-            self.name,
-            len(df),
-            len(df.columns),
-        )
-        return df
+        lf = self.load(filepath, **kwargs)
+        return self.clean(lf)
 
     def _download_file(self, url: str, dest: Path, desc: str = "") -> Path:
         """Download a file from a URL with progress bar."""

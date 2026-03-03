@@ -171,38 +171,37 @@ def run(
     lr = LandRegistryPricePaid()
     if not skip_download:
         lr.download(year=year)
-    sales = lr.load(nrows=nrows, year=year)
-    sales = lr.clean(sales)
+    # load() and clean() return LazyFrames — no data is read yet.
+    sales_lf = lr.clean(lr.load(nrows=nrows))
 
     # --- EPC ---
-    epc_df = None
+    epc_lf = None
     if not skip_epc:
         try:
             epc = EPCData()
             if not skip_download:
                 epc.download()
-            epc_df = epc.load()
-            epc_df = epc.clean(epc_df)
+            epc_lf = epc.clean(epc.load())
         except (ValueError, FileNotFoundError) as e:
             logger.warning("Skipping EPC data: %s", e)
 
     # --- UK HPI ---
-    hpi_df = None
+    hpi_lf = None
     if not skip_hpi:
         try:
             hpi = UKHousePriceIndex()
             if not skip_download:
                 hpi.download()
-            hpi_df = hpi.load()
-            hpi_df = hpi.clean(hpi_df)
+            hpi_lf = hpi.clean(hpi.load())
         except FileNotFoundError as e:
             logger.warning("Skipping UK HPI data: %s", e)
 
     # --- Pipeline ---
+    # run_pipeline executes the full lazy plan with streaming=True.
     df = run_pipeline(
-        sales=sales,
-        epc=epc_df,
-        hpi=hpi_df,
+        sales=sales_lf,
+        epc=epc_lf,
+        hpi=hpi_lf,
         output_name=output_name,
         output_dir=out_dir,
         fmt=fmt.value,

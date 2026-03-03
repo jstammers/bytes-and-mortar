@@ -36,56 +36,66 @@ def sample_epc_csv(tmp_raw_dir):
     return filepath
 
 
+def test_load_returns_lazy_frame(source, sample_epc_csv):
+    """load() must return a LazyFrame — no data read at scan time."""
+    result = source.load(filepath=sample_epc_csv)
+    assert isinstance(result, pl.LazyFrame)
+
+
 def test_load_epc_data(source, sample_epc_csv):
-    df = source.load(filepath=sample_epc_csv)
+    df = source.load(filepath=sample_epc_csv).collect()
     assert len(df) == 5
     assert "address1" in df.columns
     assert "current-energy-rating" in df.columns
 
 
+def test_clean_returns_lazy_frame(source, sample_epc_csv):
+    """clean() must accept and return a LazyFrame."""
+    lf = source.load(filepath=sample_epc_csv)
+    result = source.clean(lf)
+    assert isinstance(result, pl.LazyFrame)
+
+
 def test_clean_standardises_column_names(source, sample_epc_csv):
-    df = source.load(filepath=sample_epc_csv)
-    cleaned = source.clean(df)
+    df = source.clean(source.load(filepath=sample_epc_csv)).collect()
     # Hyphens should become underscores
-    assert "current_energy_rating" in cleaned.columns
-    assert "building_reference_number" in cleaned.columns
+    assert "current_energy_rating" in df.columns
+    assert "building_reference_number" in df.columns
 
 
 def test_clean_standardises_postcodes(source, sample_epc_csv):
-    df = source.load(filepath=sample_epc_csv)
-    cleaned = source.clean(df)
-    for pc in cleaned["postcode"]:
+    df = source.clean(source.load(filepath=sample_epc_csv)).collect()
+    for pc in df["postcode"]:
         assert pc == pc.upper()
 
 
 def test_clean_filters_invalid_ratings(source, sample_epc_csv):
-    df = source.load(filepath=sample_epc_csv)
-    cleaned = source.clean(df)
+    df = source.clean(source.load(filepath=sample_epc_csv)).collect()
     valid_ratings = {"A", "B", "C", "D", "E", "F", "G"}
-    assert cleaned["current_energy_rating"].is_in(valid_ratings).all()
+    assert df["current_energy_rating"].is_in(valid_ratings).all()
 
 
-def test_clean_deduplicates_by_building_ref(source, sample_epc_csv):
-    """Should keep only the most recent EPC per building reference."""
-    df = source.load(filepath=sample_epc_csv)
-    cleaned = source.clean(df)
-    # BRN001 appears twice; only the newer one (2023-06-15) should remain
-    brn001 = cleaned.filter(pl.col("building_reference_number") == "BRN001")
-    assert len(brn001) == 1
-    assert brn001["inspection_date"][0].year == 2023
+def test_clean_retains_all_certificates(source, sample_epc_csv):
+    """All valid EPC records should be kept — no dedup by building reference.
+
+    The pipeline selects the temporally closest certificate per sale,
+    so the full history must be available.
+    """
+    df = source.clean(source.load(filepath=sample_epc_csv)).collect()
+    # BRN001 appears twice with different inspection dates; both valid records retained.
+    brn001 = df.filter(pl.col("building_reference_number") == "BRN001")
+    assert len(brn001) == 2
 
 
 def test_clean_drops_missing_postcodes(source, sample_epc_csv):
-    df = source.load(filepath=sample_epc_csv)
-    cleaned = source.clean(df)
-    assert cleaned["postcode"].is_not_null().all()
+    df = source.clean(source.load(filepath=sample_epc_csv)).collect()
+    assert df["postcode"].is_not_null().all()
 
 
 def test_clean_numeric_conversions(source, sample_epc_csv):
-    df = source.load(filepath=sample_epc_csv)
-    cleaned = source.clean(df)
-    assert cleaned["current_energy_efficiency"].dtype.is_numeric()
-    assert cleaned["total_floor_area"].dtype.is_numeric()
+    df = source.clean(source.load(filepath=sample_epc_csv)).collect()
+    assert df["current_energy_efficiency"].dtype.is_numeric()
+    assert df["total_floor_area"].dtype.is_numeric()
 
 
 def test_no_api_token_warning(tmp_raw_dir, monkeypatch):

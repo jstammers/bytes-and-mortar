@@ -31,6 +31,15 @@ import requests
 from src.data.config import EPC_DOMESTIC_SCHEMA, EPC_DOMESTIC_SEARCH
 from src.data.sources.base import DataSource
 
+_EPC_NULL_VALUES = ["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"]
+
+# Force string typing for columns that polars might infer as int/float from schema inference.
+# Date and numeric columns are intentionally excluded: clean() parses them from their
+# string CSV representations, and pre-typing them here would break clean()'s str.to_date() calls.
+_EPC_SCAN_OVERRIDES: dict[str, type[pl.DataType]] = {
+    col: dtype for col, dtype in EPC_DOMESTIC_SCHEMA.items() if dtype in (pl.Utf8, pl.String)
+}
+
 logger = logging.getLogger(__name__)
 
 # EPC API endpoints
@@ -340,8 +349,11 @@ class EPCData(DataSource):
         logger.info("Saved EPC data for %d postcodes to %s", len(postcodes), dest)
         return dest
 
-    def load(self, filepath: Path | None = None, **kwargs) -> pl.DataFrame:
-        """Load EPC CSV into DataFrame."""
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
+        """Build a lazy scan of the EPC CSV.
+
+        The data is not read into memory until the lazy plan is collected.
+        """
         if filepath is None:
             # Find the most recent EPC file
             epc_files = sorted(self.raw_dir.glob("epc_domestic*.csv"))
@@ -349,21 +361,35 @@ class EPCData(DataSource):
                 raise FileNotFoundError("No EPC data files found. Run download() first.")
             filepath = epc_files[-1]
 
-        logger.info("Loading EPC data from %s", filepath)
-        df = pl.read_csv(filepath, infer_schema_length=10000)
-        logger.info("Loaded %d EPC records", len(df))
-        return df
+        logger.info("Building lazy scan of EPC data from %s", filepath)
+        return pl.scan_csv(
+            filepath,
+            schema_overrides=_EPC_SCAN_OVERRIDES,
+            null_values=_EPC_NULL_VALUES,
+        )
 
-    def clean(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Clean and standardise EPC data."""
-        logger.info("Cleaning EPC data (%d rows)", len(df))
+    def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Clean and standardise EPC data (lazy).
+
+        Note: All EPC certificate records are retained (no deduplication by building
+        reference). The pipeline selects the temporally closest certificate per sale,
+        so preserving the full history is essential.
+        """
+        logger.info("Building lazy cleaning plan for EPC data")
+
+        # Resolve the schema once upfront to avoid repeated (expensive) schema resolutions.
+        schema = lf.collect_schema()
+        col_names = schema.names()
 
         # Standardise column names to snake_case
-        df = df.rename({col: col.lower().replace("-", "_").replace(" ", "_") for col in df.columns})
+        rename_map = {col: col.lower().replace("-", "_").replace(" ", "_") for col in col_names}
+        lf = lf.rename(rename_map)
+        # Re-resolve after rename so subsequent checks are accurate.
+        col_names = [rename_map.get(c, c) for c in col_names]
 
         # Standardise postcode format
-        if "postcode" in df.columns:
-            df = df.with_columns(
+        if "postcode" in col_names:
+            lf = lf.with_columns(
                 pl.col("postcode")
                 .cast(pl.String)
                 .str.to_uppercase()
@@ -372,8 +398,8 @@ class EPCData(DataSource):
             )
 
         # Parse inspection_date
-        if "inspection_date" in df.columns:
-            df = df.with_columns(
+        if "inspection_date" in col_names:
+            lf = lf.with_columns(
                 pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
             )
 
@@ -389,23 +415,17 @@ class EPCData(DataSource):
             "energy_consumption_current",
             "energy_consumption_potential",
         ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
+        lf = lf.with_columns(
+            [pl.col(col).cast(pl.Float64, strict=False) for col in numeric_cols if col in col_names]
+        )
 
         # Drop rows with no postcode (can't link to sales data)
-        df = df.drop_nulls(subset=["postcode"])
+        lf = lf.drop_nulls(subset=["postcode"])
 
         # Filter to domestic properties with valid energy ratings
-        valid_ratings = ["A", "B", "C", "D", "E", "F", "G"]
-        if "current_energy_rating" in df.columns:
-            df = df.filter(pl.col("current_energy_rating").is_in(valid_ratings))
-
-        # Keep most recent EPC per property (by building reference)
-        if "building_reference_number" in df.columns and "inspection_date" in df.columns:
-            df = df.sort("inspection_date", descending=True, nulls_last=True).unique(
-                subset=["building_reference_number"], keep="first", maintain_order=True
+        if "current_energy_rating" in col_names:
+            lf = lf.filter(
+                pl.col("current_energy_rating").is_in(["A", "B", "C", "D", "E", "F", "G"])
             )
 
-        logger.info("After cleaning: %d rows", len(df))
-        return df
+        return lf
