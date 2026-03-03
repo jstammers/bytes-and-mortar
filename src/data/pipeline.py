@@ -49,8 +49,10 @@ def link_sales_to_epc(
 
     Strategy:
     1. Normalise addresses in both datasets.
-    2. Left join sales to EPC on postcode — this produces all candidate EPC
-       records for each sale (a property may have multiple certificates).
+    2. Phase 1 — left join sales to a *slim* EPC frame (postcode + scoring columns
+       only) on postcode.  This produces all candidate EPC records per sale but
+       keeps each intermediate row narrow, reducing the memory footprint of the
+       subsequent sort+unique step by ~20x vs. joining the full feature set.
     3. Score each candidate:
          0 = postcode AND normalised address match  (best)
          1 = postcode match only                    (fallback)
@@ -58,6 +60,9 @@ def link_sales_to_epc(
     4. Compute |sale_date - inspection_date| in days (null when unmatched).
     5. Sort by (transaction_id, match_score, date_diff) and keep the first
        row per transaction — i.e. the best temporal match per sale.
+    6. Phase 2 — 1:1 join the deduplicated (sales-sized) frame back to the full
+       EPC feature set on lmk_key.  No fan-out; all wide EPC columns are attached
+       only after the result is already one-row-per-sale.
 
     This produces a left join result: sales without any EPC match are retained
     with null EPC columns (match_score = 2).
@@ -89,11 +94,31 @@ def link_sales_to_epc(
             .alias("_addr_key")
         )
 
-    # --- Join on postcode to get all EPC candidates per sale ---
-    # EPC columns that conflict with sales columns (except postcode) will be
-    # renamed with the "_epc" suffix. In particular, if both frames have "_addr_key",
-    # the EPC version becomes "_addr_key_epc".
-    merged = sales_lf.join(epc_lf, on="postcode", how="left", suffix="_epc")
+    # Resolve the EPC schema once after address normalisation (epc_lf may have
+    # gained _addr_key above).
+    epc_cols_after_norm = epc_lf.collect_schema().names()
+
+    # lmk_key uniquely identifies each certificate and is the pivot for Phase 2.
+    epc_id_col = "lmk_key" if "lmk_key" in epc_cols_after_norm else None
+
+    # --- Phase 1: join on postcode using only the columns needed for scoring ---
+    # The postcode join fans out to (sales x EPC candidates per postcode) rows.
+    # Restricting EPC to a slim key frame means each of those rows carries only
+    # 3-4 columns rather than 80+, so the sort+unique step processes far less data.
+    if epc_id_col is not None:
+        key_cols = [
+            c
+            for c in ["postcode", "_addr_key", "inspection_date", epc_id_col]
+            if c in epc_cols_after_norm
+        ]
+        join_target = epc_lf.select(key_cols)
+    else:
+        # No unique certificate key available — fall back to joining the full frame.
+        join_target = epc_lf
+
+    # EPC columns that conflict with sales columns (except the join key) are
+    # renamed with the "_epc" suffix; e.g. _addr_key → _addr_key_epc.
+    merged = sales_lf.join(join_target, on="postcode", how="left", suffix="_epc")
     merged_cols = merged.collect_schema().names()
 
     # --- Score each candidate row ---
@@ -147,7 +172,7 @@ def link_sales_to_epc(
         subset=dedup_cols, keep="first", maintain_order=False
     )
 
-    # --- Drop working columns ---
+    # --- Drop working columns used for scoring ---
     drop_cols = [
         c
         for c in ["_addr_key", "_addr_key_epc", "_match_score", "_date_diff"]
@@ -156,9 +181,26 @@ def link_sales_to_epc(
     if drop_cols:
         result = result.drop(drop_cols)
 
-    logger.info(
-        "EPC join plan built (join on postcode → score by address + date → deduplicate per sale)"
-    )
+    # --- Phase 2: join winning certificate back to the full EPC feature set ---
+    # result is now sales-sized (one row per transaction).  This 1:1 join on
+    # lmk_key attaches all EPC feature columns with no fan-out.
+    # We exclude from the EPC side columns already present in result to avoid
+    # spurious _epc-suffixed duplicates:
+    #   postcode        - already in sales
+    #   _addr_key       - working column not wanted in output
+    #   inspection_date - retained from the Phase-1 key join (identical value)
+    if epc_id_col is not None:
+        epc_feature_drop = [
+            c for c in ["postcode", "_addr_key", "inspection_date"] if c in epc_cols_after_norm
+        ]
+        epc_features = epc_lf.drop(epc_feature_drop)
+        result = result.join(epc_features, on=epc_id_col, how="left", suffix="_epc")
+        logger.info(
+            "EPC join plan built (two-phase: slim key join → deduplicate → full feature join)"
+        )
+    else:
+        logger.info("EPC join plan built (single-phase: full join → deduplicate per sale)")
+
     return result
 
 
@@ -245,20 +287,48 @@ def save_dataset(
     name: str,
     output_dir: Path | None = None,
     fmt: str = "parquet",
+    partition_by: list[str] | None = None,
 ) -> Path:
     """Save a DataFrame or LazyFrame to the processed data directory.
 
     LazyFrames are written via sink_parquet / sink_csv, which execute the
     full query plan in streaming mode — peak memory is O(batch) not O(dataset).
 
+    When *partition_by* is provided the output is written as a hive-partitioned
+    parquet dataset (e.g. ``name/year=2024/part-0.parquet``).  The return value
+    is the dataset directory rather than a single file.  CSV format does not
+    support partitioning; *partition_by* is silently ignored when fmt="csv".
+
     Args:
         df: DataFrame or LazyFrame to save.
-        name: Base filename (without extension).
+        name: Base filename (without extension), or directory name when partitioning.
         output_dir: Override output directory.
         fmt: Output format — "parquet" (default) or "csv".
+        partition_by: Column(s) to partition by (e.g. ["year"] or ["year", "district"]).
+            Only applies to parquet output; uses Polars hive-style partitioning.
     """
     out_dir = output_dir or PROCESSED_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if partition_by and fmt == "parquet":
+        dest = out_dir / name
+        dest.mkdir(parents=True, exist_ok=True)
+        if isinstance(df, pl.LazyFrame):
+            # PartitionBy was renamed from PartitionByKey between Polars 1.30 and 1.38.
+            if hasattr(pl, "PartitionBy"):
+                scheme = pl.PartitionBy(dest, key=partition_by)
+            else:
+                scheme = pl.PartitionByKey(dest, by=partition_by)
+            df.sink_parquet(scheme, mkdir=True)
+        else:
+            df.write_parquet(dest, partition_by=partition_by)
+        logger.info(
+            "Saved partitioned parquet dataset to %s (partition keys: %s)", dest, partition_by
+        )
+        return dest
+
+    if partition_by and fmt != "parquet":
+        logger.warning("partition_by is only supported for parquet; ignoring for fmt=%s", fmt)
 
     if isinstance(df, pl.LazyFrame):
         if fmt == "parquet":
@@ -287,6 +357,7 @@ def run_pipeline(
     output_name: str = "uk_property_sales",
     output_dir: Path | None = None,
     fmt: str = "parquet",
+    partition_by: list[str] | None = None,
 ) -> pl.DataFrame:
     """Run the full data linking pipeline.
 
@@ -298,9 +369,10 @@ def run_pipeline(
         sales: Land Registry Price Paid Data (required).
         epc: EPC data (optional — all certificates retained for temporal matching).
         hpi: UK HPI data (optional — will enrich if provided).
-        output_name: Name for the output file.
+        output_name: Name for the output file or partition directory.
         output_dir: Directory to save output.
         fmt: Output format.
+        partition_by: Column(s) to partition the parquet output by (e.g. ["year"]).
 
     Returns:
         The collected DataFrame after streaming execution.
@@ -322,5 +394,5 @@ def run_pipeline(
     df: pl.DataFrame = lf.collect(engine="streaming")  # type: ignore[assignment]
 
     logger.info("Pipeline complete: %d rows, %d columns", len(df), len(df.columns))
-    save_dataset(df, output_name, output_dir=output_dir, fmt=fmt)
+    save_dataset(df, output_name, output_dir=output_dir, fmt=fmt, partition_by=partition_by)
     return df

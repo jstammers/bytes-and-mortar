@@ -158,6 +158,13 @@ def run(
         str, typer.Option(help="Output filename (without extension).")
     ] = "uk_property_sales",
     fmt: Annotated[OutputFormat, typer.Option(help="Output format.")] = OutputFormat.parquet,
+    partition_by: Annotated[
+        str | None,
+        typer.Option(
+            help="Comma-separated column(s) to partition the parquet output by "
+            "(e.g. 'year' or 'year,district'). Only applies to parquet format."
+        ),
+    ] = None,
     output_dir: Annotated[
         Path | None, typer.Option(help="Override processed data output directory.")
     ] = None,
@@ -198,6 +205,7 @@ def run(
 
     # --- Pipeline ---
     # run_pipeline executes the full lazy plan with streaming=True.
+    partition_cols = [c.strip() for c in partition_by.split(",")] if partition_by else None
     df = run_pipeline(
         sales=sales_lf,
         epc=epc_lf,
@@ -205,6 +213,7 @@ def run(
         output_name=output_name,
         output_dir=out_dir,
         fmt=fmt.value,
+        partition_by=partition_cols,
     )
 
     typer.echo(
