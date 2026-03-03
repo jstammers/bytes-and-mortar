@@ -350,10 +350,25 @@ def save_dataset(
     return dest
 
 
+def _to_lazy(src: pl.DataFrame | pl.LazyFrame | Path) -> pl.LazyFrame:
+    """Coerce a DataFrame, LazyFrame, or Path to a LazyFrame.
+
+    Path inputs must point to a ``.parquet`` or ``.csv`` file.  Parquet is
+    scanned with ``pl.scan_parquet``; CSV is scanned with ``pl.scan_csv``
+    using default options (suitable for files that have already been cleaned
+    by a source's ``load()`` method).
+    """
+    if isinstance(src, Path):
+        if not src.exists():
+            raise FileNotFoundError(f"Data file not found: {src}")
+        return pl.scan_parquet(src) if src.suffix == ".parquet" else pl.scan_csv(src)
+    return src.lazy() if isinstance(src, pl.DataFrame) else src
+
+
 def run_pipeline(
-    sales: pl.DataFrame | pl.LazyFrame,
-    epc: pl.DataFrame | pl.LazyFrame | None = None,
-    hpi: pl.DataFrame | pl.LazyFrame | None = None,
+    sales: pl.DataFrame | pl.LazyFrame | Path,
+    epc: pl.DataFrame | pl.LazyFrame | Path | None = None,
+    hpi: pl.DataFrame | pl.LazyFrame | Path | None = None,
     output_name: str = "uk_property_sales",
     output_dir: Path | None = None,
     fmt: str = "parquet",
@@ -366,9 +381,14 @@ def run_pipeline(
     proportional to batch size rather than dataset size.
 
     Args:
-        sales: Land Registry Price Paid Data (required).
-        epc: EPC data (optional — all certificates retained for temporal matching).
-        hpi: UK HPI data (optional — will enrich if provided).
+        sales: Land Registry Price Paid Data (required).  Accepts a
+            LazyFrame/DataFrame or a ``Path`` to a ``.parquet`` or ``.csv``
+            file.  Parquet is preferred — pass a pre-built parquet to avoid
+            the CSV brace-stripping overhead on repeat runs.
+        epc: EPC data (optional — all certificates retained for temporal
+            matching).  Same type options as *sales*.
+        hpi: UK HPI data (optional — will enrich if provided).  Same type
+            options as *sales*.
         output_name: Name for the output file or partition directory.
         output_dir: Directory to save output.
         fmt: Output format.
@@ -377,15 +397,15 @@ def run_pipeline(
     Returns:
         The collected DataFrame after streaming execution.
     """
-    lf = sales.lazy() if isinstance(sales, pl.DataFrame) else sales
+    lf = _to_lazy(sales)
     logger.info("Building pipeline plan")
 
     if epc is not None:
-        epc_lf = epc.lazy() if isinstance(epc, pl.DataFrame) else epc
+        epc_lf = _to_lazy(epc)
         lf = link_sales_to_epc(lf, epc_lf)
 
     if hpi is not None:
-        hpi_lf = hpi.lazy() if isinstance(hpi, pl.DataFrame) else hpi
+        hpi_lf = _to_lazy(hpi)
         lf = enrich_with_hpi(lf, hpi_lf)
 
     logger.info("Executing pipeline with streaming engine")
