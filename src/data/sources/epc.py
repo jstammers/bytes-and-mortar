@@ -353,7 +353,7 @@ class EPCData(DataSource):
             filepath = epc_files[-1]
 
         logger.info("Building lazy scan of EPC data from %s", filepath)
-        return pl.scan_csv(filepath, infer_schema_length=10000)
+        return pl.scan_csv(filepath, schema=EPC_DOMESTIC_SCHEMA, null_values=["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"], schema_overrides={"inspection_date": pl.Date})
 
     def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         """Clean and standardise EPC data (lazy).
@@ -384,11 +384,13 @@ class EPCData(DataSource):
                 .str.replace_all(r"\s+", " ")
             )
 
-        # Parse inspection_date
+        # Parse inspection_date when loaded as string; keep typed date columns as-is.
         if "inspection_date" in col_names:
-            lf = lf.with_columns(
-                pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
-            )
+            inspection_dtype = lf.collect_schema().get("inspection_date")
+            if inspection_dtype == pl.String:
+                lf = lf.with_columns(
+                    pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
+                )
 
         # Numeric conversions
         numeric_cols = [
