@@ -119,3 +119,8 @@ UK_HPI_SPARQL_ENDPOINT = "http://landregistry.data.gov.uk/landregistry/query"
 # --- Chunk sizes for large file downloads ---
 DOWNLOAD_CHUNK_SIZE = 8192  # bytes
 CSV_CHUNK_SIZE = 50_000  # rows per chunk when reading large CSVs
+
+# --- ML model paths ---
+MODELS_DIR = PROJECT_DIR / "models"
+MLRUNS_DIR = PROJECT_DIR / "mlruns"
+PROCESSED_DATA_PATH = PROCESSED_DIR / "uk_property_sales.parquet"
