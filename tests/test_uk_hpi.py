@@ -36,8 +36,14 @@ def sample_hpi_csv(tmp_raw_dir):
     return filepath
 
 
+def test_load_returns_lazy_frame(source, sample_hpi_csv):
+    """load() must return a LazyFrame — no data read at scan time."""
+    result = source.load(filepath=sample_hpi_csv)
+    assert isinstance(result, pl.LazyFrame)
+
+
 def test_load_hpi(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
+    df = source.load(filepath=sample_hpi_csv).collect()
     assert len(df) == 6
     assert "RegionName" in df.columns
 
@@ -47,45 +53,45 @@ def test_load_file_not_found(source):
         source.load(filepath=Path("/nonexistent/file.csv"))
 
 
+def test_clean_returns_lazy_frame(source, sample_hpi_csv):
+    """clean() must accept and return a LazyFrame."""
+    result = source.clean(source.load(filepath=sample_hpi_csv))
+    assert isinstance(result, pl.LazyFrame)
+
+
 def test_clean_standardises_column_names(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
-    cleaned = source.clean(df)
-    assert "regionname" in cleaned.columns
-    assert "averageprice" in cleaned.columns
+    df = source.clean(source.load(filepath=sample_hpi_csv)).collect()
+    assert "regionname" in df.columns
+    assert "averageprice" in df.columns
 
 
 def test_clean_parses_dates(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
-    cleaned = source.clean(df)
-    assert "year" in cleaned.columns
-    assert "month" in cleaned.columns
-    assert cleaned["date"].dtype == pl.Date
+    df = source.clean(source.load(filepath=sample_hpi_csv)).collect()
+    assert "year" in df.columns
+    assert "month" in df.columns
+    assert df["date"].dtype == pl.Date
 
 
 def test_clean_drops_empty_rows(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
-    cleaned = source.clean(df)
+    df = source.clean(source.load(filepath=sample_hpi_csv)).collect()
     # The empty row should be dropped
-    assert len(cleaned) == 5
+    assert len(df) == 5
 
 
 def test_clean_numeric_columns(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
-    cleaned = source.clean(df)
-    assert cleaned["averageprice"].dtype.is_numeric()
-    assert cleaned["index"].dtype.is_numeric()
+    df = source.clean(source.load(filepath=sample_hpi_csv)).collect()
+    assert df["averageprice"].dtype.is_numeric()
+    assert df["index"].dtype.is_numeric()
 
 
 def test_get_area_prices(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
-    cleaned = source.clean(df)
-    london = source.get_area_prices(cleaned, "London")
+    df = source.clean(source.load(filepath=sample_hpi_csv)).collect()
+    london = source.get_area_prices(df, "London")
     assert len(london) == 2
     assert (london["regionname"] == "London").all()
 
 
 def test_get_area_prices_case_insensitive(source, sample_hpi_csv):
-    df = source.load(filepath=sample_hpi_csv)
-    cleaned = source.clean(df)
-    london = source.get_area_prices(cleaned, "london")
+    df = source.clean(source.load(filepath=sample_hpi_csv)).collect()
+    london = source.get_area_prices(df, "london")
     assert len(london) == 2

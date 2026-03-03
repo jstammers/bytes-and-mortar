@@ -36,8 +36,11 @@ class UKHousePriceIndex(DataSource):
         dest = self.raw_dir / "uk_hpi_full.csv"
         return self._download_file(download_url, dest, desc="UK HPI")
 
-    def load(self, filepath: Path | None = None, **kwargs) -> pl.DataFrame:
-        """Load UK HPI CSV into DataFrame."""
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
+        """Build a lazy scan of the UK HPI CSV.
+
+        The data is not read into memory until the lazy plan is collected.
+        """
         if filepath is None:
             filepath = self.raw_dir / "uk_hpi_full.csv"
 
@@ -46,22 +49,25 @@ class UKHousePriceIndex(DataSource):
                 f"UK HPI data file not found: {filepath}. Run download() first."
             )
 
-        logger.info("Loading UK HPI data from %s", filepath)
-        df = pl.read_csv(filepath, infer_schema_length=10000)
-        logger.info("Loaded %d UK HPI records", len(df))
-        return df
+        logger.info("Building lazy scan of UK HPI data from %s", filepath)
+        return pl.scan_csv(filepath, infer_schema_length=10000)
 
-    def clean(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Clean and standardise UK HPI data."""
-        logger.info("Cleaning UK HPI data (%d rows)", len(df))
+    def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Clean and standardise UK HPI data (lazy)."""
+        logger.info("Building lazy cleaning plan for UK HPI data")
+
+        # Resolve the schema once upfront to avoid repeated (expensive) schema resolutions.
+        col_names = lf.collect_schema().names()
 
         # Standardise column names
-        df = df.rename({col: col.strip().lower().replace(" ", "_") for col in df.columns})
+        rename_map = {col: col.strip().lower().replace(" ", "_") for col in col_names}
+        lf = lf.rename(rename_map)
+        col_names = [rename_map.get(c, c) for c in col_names]
 
         # Parse date column
-        if "date" in df.columns:
-            df = df.with_columns(pl.col("date").str.to_date(format="%Y-%m-%d", strict=False))
-            df = df.with_columns(
+        if "date" in col_names:
+            lf = lf.with_columns(pl.col("date").str.to_date(format="%Y-%m-%d", strict=False))
+            lf = lf.with_columns(
                 [
                     pl.col("date").dt.year().alias("year"),
                     pl.col("date").dt.month().alias("month"),
@@ -71,7 +77,7 @@ class UKHousePriceIndex(DataSource):
         # Ensure numeric columns are numeric
         price_cols = [
             c
-            for c in df.columns
+            for c in col_names
             if any(
                 kw in c
                 for kw in [
@@ -82,20 +88,18 @@ class UKHousePriceIndex(DataSource):
                 ]
             )
         ]
-        for col in price_cols:
-            df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
+        if price_cols:
+            lf = lf.with_columns([pl.col(col).cast(pl.Float64, strict=False) for col in price_cols])
 
         # Drop rows with no region/area name
-        area_col = None
-        for candidate in ["regionname", "region_name", "areacode", "area_code"]:
-            if candidate in df.columns:
-                area_col = candidate
-                break
+        area_col = next(
+            (c for c in ["regionname", "region_name", "areacode", "area_code"] if c in col_names),
+            None,
+        )
         if area_col:
-            df = df.drop_nulls(subset=[area_col])
+            lf = lf.drop_nulls(subset=[area_col])
 
-        logger.info("After cleaning: %d rows", len(df))
-        return df
+        return lf
 
     def get_area_prices(self, df: pl.DataFrame, area_name: str) -> pl.DataFrame:
         """Filter UK HPI data to a specific area/region."""
