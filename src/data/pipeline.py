@@ -9,6 +9,7 @@ allows datasets larger than available RAM to be processed efficiently.
 """
 
 import logging
+import tempfile
 from pathlib import Path
 
 import polars as pl
@@ -44,6 +45,7 @@ def _addr_key_expr(paon_col: str = "paon", street_col: str = "street") -> pl.Exp
 def link_sales_to_epc(
     sales: pl.DataFrame | pl.LazyFrame,
     epc: pl.DataFrame | pl.LazyFrame,
+    _phase1_sink: Path | None = None,
 ) -> pl.LazyFrame:
     """Link Land Registry sales to EPC records, returning a lazy plan.
 
@@ -66,6 +68,13 @@ def link_sales_to_epc(
 
     This produces a left join result: sales without any EPC match are retained
     with null EPC columns (match_score = 2).
+
+    When *_phase1_sink* is a ``Path``, the Phase-1 result (after deduplication)
+    is materialised to that file via ``sink_parquet`` before Phase-2 begins.
+    This breaks the lazy plan in two, allowing the streaming engine to fully
+    flush the large postcode fan-out before the 1:1 feature join, which keeps
+    peak memory proportional to the streaming batch size rather than the full
+    cross-product of sales × EPC records per postcode.
 
     The returned LazyFrame is not executed until .collect() or .sink_*() is called.
     """
@@ -100,6 +109,11 @@ def link_sales_to_epc(
 
     # lmk_key uniquely identifies each certificate and is the pivot for Phase 2.
     epc_id_col = "lmk_key" if "lmk_key" in epc_cols_after_norm else None
+
+    # Pre-filter EPC to only postcodes that appear in sales.  This eliminates
+    # certificates for postcodes with no corresponding sales transactions and
+    # reduces the Phase-1 fan-out — a semi-join has no effect on column schema.
+    epc_lf = epc_lf.join(sales_lf.select("postcode").unique(), on="postcode", how="semi")
 
     # --- Phase 1: join on postcode using only the columns needed for scoring ---
     # The postcode join fans out to (sales x EPC candidates per postcode) rows.
@@ -180,6 +194,17 @@ def link_sales_to_epc(
     ]
     if drop_cols:
         result = result.drop(drop_cols)
+
+    # --- Materialise Phase-1 result to disk (optional) ---
+    # Sinking here breaks the lazy plan so the streaming engine can fully flush
+    # the large postcode fan-out before the 1:1 Phase-2 join.  Without this,
+    # both the fan-out intermediate and the full EPC feature set must coexist in
+    # the plan, driving peak memory to O(sales × EPC-per-postcode × full-width).
+    if epc_id_col is not None and _phase1_sink is not None:
+        _phase1_sink.parent.mkdir(parents=True, exist_ok=True)
+        result.sink_parquet(_phase1_sink)
+        result = pl.scan_parquet(_phase1_sink)
+        logger.info("Phase-1 intermediate written to %s; resuming Phase-2", _phase1_sink)
 
     # --- Phase 2: join winning certificate back to the full EPC feature set ---
     # result is now sales-sized (one row per transaction).  This 1:1 join on
@@ -376,9 +401,17 @@ def run_pipeline(
 ) -> pl.DataFrame:
     """Run the full data linking pipeline.
 
-    Builds a lazy query plan from all sources, then executes it once using
-    collect(streaming=True).  Data is processed in batches so peak memory is
-    proportional to batch size rather than dataset size.
+    When EPC data is provided the join runs in two streaming passes:
+
+    1. Phase 1 — postcode fan-out join → score → sort → unique → sink to a
+       temporary parquet file.  Peak memory is proportional to a single
+       streaming batch, not the full cross-product of sales × EPC records per
+       postcode.
+    2. Phase 2 — 1:1 join of the (sales-sized) Phase-1 result to the full EPC
+       feature set → sink directly to the output destination.
+
+    The temporary Phase-1 file lives inside a ``tempfile.TemporaryDirectory``
+    that is cleaned up once Phase-2 finishes writing the final output.
 
     Args:
         sales: Land Registry Price Paid Data (required).  Accepts a
@@ -395,24 +428,44 @@ def run_pipeline(
         partition_by: Column(s) to partition the parquet output by (e.g. ["year"]).
 
     Returns:
-        The collected DataFrame after streaming execution.
+        The collected DataFrame read back from the saved output.  The pipeline
+        itself runs via streaming sinks (O(batch) peak memory).  For datasets
+        that are too large to fit in RAM, use ``pl.scan_parquet(dest)`` on the
+        saved file instead of consuming the return value.
     """
     lf = _to_lazy(sales)
     logger.info("Building pipeline plan")
 
     if epc is not None:
         epc_lf = _to_lazy(epc)
-        lf = link_sales_to_epc(lf, epc_lf)
+        # The EPC join is split into two streaming passes via a temporary file
+        # so the streaming engine can flush the large Phase-1 postcode fan-out
+        # before the 1:1 Phase-2 join.  The TemporaryDirectory context keeps
+        # the Phase-1 file alive until save_dataset finishes writing the output.
+        with tempfile.TemporaryDirectory(prefix="bytes_mortar_") as _tmp:
+            phase1_path = Path(_tmp) / "phase1_dedup.parquet"
+            lf = link_sales_to_epc(lf, epc_lf, _phase1_sink=phase1_path)
+            if hpi is not None:
+                hpi_lf = _to_lazy(hpi)
+                lf = enrich_with_hpi(lf, hpi_lf)
+            logger.info("Executing pipeline (streaming two-pass EPC join)")
+            dest = save_dataset(
+                lf, output_name, output_dir=output_dir, fmt=fmt, partition_by=partition_by
+            )
+    else:
+        if hpi is not None:
+            hpi_lf = _to_lazy(hpi)
+            lf = enrich_with_hpi(lf, hpi_lf)
+        logger.info("Executing pipeline with streaming engine")
+        dest = save_dataset(
+            lf, output_name, output_dir=output_dir, fmt=fmt, partition_by=partition_by
+        )
 
-    if hpi is not None:
-        hpi_lf = _to_lazy(hpi)
-        lf = enrich_with_hpi(lf, hpi_lf)
-
-    logger.info("Executing pipeline with streaming engine")
-    # polars stubs annotate collect() as InProcessQuery | DataFrame; the streaming
-    # engine always returns a DataFrame synchronously, so cast to satisfy ty.
-    df: pl.DataFrame = lf.collect(engine="streaming")  # type: ignore[assignment]
-
+    # Re-read from the saved file to return a DataFrame for API callers.
+    # The heavy lifting above ran via streaming sinks; this collect just reads
+    # the already-persisted result.  For very large outputs, prefer
+    # pl.scan_parquet(dest) over consuming this return value.
+    saved_lf = pl.scan_parquet(dest) if fmt == "parquet" else pl.scan_csv(dest)
+    df: pl.DataFrame = saved_lf.collect()
     logger.info("Pipeline complete: %d rows, %d columns", len(df), len(df.columns))
-    save_dataset(df, output_name, output_dir=output_dir, fmt=fmt, partition_by=partition_by)
     return df
