@@ -1,11 +1,12 @@
 """Pipeline to link and merge UK property data from multiple sources.
 
 Joins Land Registry Price Paid transactions with EPC property features
-on postcode + address matching, and enriches with UK HPI area-level data.
+on postcode + address matching using join_asof for O(n log m) complexity
+with no intermediate fan-out, and enriches with UK HPI area-level data.
 
-All pipeline functions accept and return pl.LazyFrame, building a single
-lazy query plan that is executed once at the end with streaming=True. This
-allows datasets larger than available RAM to be processed efficiently.
+All pipeline functions accept and return pl.LazyFrame, building lazy
+query plans that are executed via streaming sinks (sink_parquet / sink_csv)
+to keep peak memory proportional to the streaming batch size.
 """
 
 import logging
@@ -47,34 +48,28 @@ def link_sales_to_epc(
     epc: pl.DataFrame | pl.LazyFrame,
     _phase1_sink: Path | None = None,
 ) -> pl.LazyFrame:
-    """Link Land Registry sales to EPC records, returning a lazy plan.
+    """Link Land Registry sales to EPC records using join_asof.
 
     Strategy:
-    1. Normalise addresses in both datasets.
-    2. Phase 1 — left join sales to a *slim* EPC frame (postcode + scoring columns
-       only) on postcode.  This produces all candidate EPC records per sale but
-       keeps each intermediate row narrow, reducing the memory footprint of the
-       subsequent sort+unique step by ~20x vs. joining the full feature set.
-    3. Score each candidate:
-         0 = postcode AND normalised address match  (best)
-         1 = postcode match only                    (fallback)
-         2 = no EPC record found for that postcode  (unmatched)
-    4. Compute |sale_date - inspection_date| in days (null when unmatched).
-    5. Sort by (transaction_id, match_score, date_diff) and keep the first
-       row per transaction — i.e. the best temporal match per sale.
-    6. Phase 2 — 1:1 join the deduplicated (sales-sized) frame back to the full
-       EPC feature set on lmk_key.  No fan-out; all wide EPC columns are attached
-       only after the result is already one-row-per-sale.
+    1. Normalise addresses in both datasets (_addr_key from PAON+street / address1).
+    2. Pre-filter EPC to postcodes present in sales (semi-join; no schema change).
+    3. Phase 1a — join_asof on (postcode, _addr_key) with strategy="nearest":
+       each sale is matched to the EPC certificate with the closest inspection
+       date sharing the same postcode AND normalised address.  Result is always
+       sales-sized — no fan-out, no sort+unique dedup step.
+    4. Phase 1b — join_asof on (postcode) for sales that Phase 1a left unmatched,
+       providing a postcode-only nearest-date fallback.
+    5. Combine Phase 1a and Phase 1b results (concat).
+    6. Phase 2 — 1:1 join the combined (sales-sized) result to the full EPC
+       feature set on lmk_key.  No fan-out; wide columns are attached only after
+       the result is already one-row-per-sale.
 
     This produces a left join result: sales without any EPC match are retained
-    with null EPC columns (match_score = 2).
+    with null EPC columns.
 
-    When *_phase1_sink* is a ``Path``, the Phase-1 result (after deduplication)
-    is materialised to that file via ``sink_parquet`` before Phase-2 begins.
-    This breaks the lazy plan in two, allowing the streaming engine to fully
-    flush the large postcode fan-out before the 1:1 feature join, which keeps
-    peak memory proportional to the streaming batch size rather than the full
-    cross-product of sales × EPC records per postcode.
+    When *_phase1_sink* is a ``Path``, the Phase-1 result is materialised to disk
+    via ``sink_parquet`` before Phase-2 begins, isolating Phase-2's feature join
+    from the asof-join graph and bounding its peak memory.
 
     The returned LazyFrame is not executed until .collect() or .sink_*() is called.
     """
@@ -111,120 +106,126 @@ def link_sales_to_epc(
     epc_id_col = "lmk_key" if "lmk_key" in epc_cols_after_norm else None
 
     # Pre-filter EPC to only postcodes that appear in sales.  This eliminates
-    # certificates for postcodes with no corresponding sales transactions and
-    # reduces the Phase-1 fan-out — a semi-join has no effect on column schema.
+    # certificates for postcodes with no corresponding sales transactions.
+    # A semi-join has no effect on the output schema.
     epc_lf = epc_lf.join(sales_lf.select("postcode").unique(), on="postcode", how="semi")
 
-    # --- Phase 1: join on postcode using only the columns needed for scoring ---
-    # The postcode join fans out to (sales x EPC candidates per postcode) rows.
-    # Restricting EPC to a slim key frame means each of those rows carries only
-    # 3-4 columns rather than 80+, so the sort+unique step processes far less data.
+    # --- Build slim EPC key frame for Phase-1 asof joins ---
+    # join_asof only needs the group columns, the date key, and the cert ID.
+    # Full EPC features are attached in Phase 2 to avoid wide intermediates.
     if epc_id_col is not None:
         key_cols = [
             c
             for c in ["postcode", "_addr_key", "inspection_date", epc_id_col]
             if c in epc_cols_after_norm
         ]
-        join_target = epc_lf.select(key_cols)
     else:
-        # No unique certificate key available — fall back to joining the full frame.
-        join_target = epc_lf
+        key_cols = epc_cols_after_norm  # no unique key — carry all columns through Phase 1
 
-    # EPC columns that conflict with sales columns (except the join key) are
-    # renamed with the "_epc" suffix; e.g. _addr_key → _addr_key_epc.
-    merged = sales_lf.join(join_target, on="postcode", how="left", suffix="_epc")
-    merged_cols = merged.collect_schema().names()
-
-    # --- Score each candidate row ---
-    has_addr_match = "_addr_key" in merged_cols and "_addr_key_epc" in merged_cols
-    has_inspection_date = "inspection_date" in merged_cols
-
-    if has_addr_match and has_inspection_date:
-        score_expr = (
-            pl.when(pl.col("inspection_date").is_null())
-            .then(pl.lit(2))
-            .when(
-                pl.col("_addr_key").is_not_null()
-                & pl.col("_addr_key_epc").is_not_null()
-                & (pl.col("_addr_key") == pl.col("_addr_key_epc"))
-            )
-            .then(pl.lit(0))
-            .otherwise(pl.lit(1))
-        )
-    elif has_inspection_date:
-        score_expr = (
-            pl.when(pl.col("inspection_date").is_null()).then(pl.lit(1)).otherwise(pl.lit(0))
-        )
-    else:
-        score_expr = pl.lit(0)
-
-    merged = merged.with_columns(score_expr.alias("_match_score"))
-
-    # --- Compute date difference ---
-    sort_cols = ["_match_score"]
-    if "date_of_transfer" in merged_cols and "inspection_date" in merged_cols:
-        merged = merged.with_columns(
-            (pl.col("date_of_transfer").cast(pl.Date) - pl.col("inspection_date"))
-            .dt.total_days()
-            .abs()
-            .alias("_date_diff")
-        )
-        sort_cols.append("_date_diff")
-
-    # --- Pick best EPC match per sale ---
-    # Determine the deduplication key (prefer transaction_id).
-    dedup_cols = (
-        ["transaction_id"]
-        if "transaction_id" in merged_cols
-        else [c for c in sales_cols[:3] if c in merged_cols]
+    # join_asof requires the right frame to be sorted on the asof key.
+    # Exclude null inspection_dates — they must never win a nearest-date match.
+    epc_key = (
+        epc_lf.select(key_cols)
+        .filter(pl.col("inspection_date").is_not_null())
+        .sort("inspection_date")
     )
 
-    # Sort so that for each transaction the best candidate comes first,
-    # then unique(keep="first") selects it.  maintain_order=False is required
-    # for streaming compatibility.
-    result = merged.sort(dedup_cols + sort_cols, nulls_last=True).unique(
-        subset=dedup_cols, keep="first", maintain_order=False
+    # Cast date_of_transfer to pl.Date for type compatibility with inspection_date.
+    # (date_of_transfer is pl.Datetime after load(); inspection_date is pl.Date after clean().)
+    # The cast is a no-op when date_of_transfer is already pl.Date (e.g. in tests).
+    sales_lf = sales_lf.with_columns(
+        pl.col("date_of_transfer").cast(pl.Date).alias("_sale_date")
     )
+    sales_sorted = sales_lf.sort("_sale_date", nulls_last=True)
 
-    # --- Drop working columns used for scoring ---
+    # Track sales-side columns so we can identify EPC columns added by the asof join.
+    sales_schema = set(sales_sorted.collect_schema().names())
+
+    can_addr_match = "_addr_key" in sales_schema and "_addr_key" in epc_cols_after_norm
+
+    if can_addr_match:
+        # --- Phase 1a: exact (postcode + address) match, nearest inspection date ---
+        # join_asof groups by (postcode, _addr_key) and selects the EPC certificate
+        # whose inspection_date is closest to the sale's _sale_date.
+        # The result is always sales-sized — one output row per input sale.
+        # By-columns (postcode, _addr_key) from the right side are NOT added to the
+        # output; only non-by EPC columns (inspection_date, lmk_key, …) are appended.
+        phase1a = sales_sorted.join_asof(
+            epc_key,
+            left_on="_sale_date",
+            right_on="inspection_date",
+            by=["postcode", "_addr_key"],
+            strategy="nearest",
+            suffix="_epc",
+        )
+
+        # A null lmk_key (or inspection_date when lmk_key is absent) means no EPC
+        # record exists for that (postcode, address) group → falls through to Phase 1b.
+        null_col = epc_id_col or "inspection_date"
+        addr_matched = phase1a.filter(pl.col(null_col).is_not_null())
+
+        # Strip the (all-null) EPC columns from unmatched rows before Phase 1b so
+        # the postcode-only join starts from a clean sales-only schema.
+        epc_added = [c for c in phase1a.collect_schema().names() if c not in sales_schema]
+        addr_unmatched = phase1a.filter(pl.col(null_col).is_null()).drop(epc_added)
+
+        # --- Phase 1b: postcode-only fallback for sales without an address match ---
+        # _addr_key from the EPC side is not a by-column here, so Polars appends it
+        # as _addr_key_epc.  diagonal_relaxed concat handles the schema difference.
+        phase1b = addr_unmatched.join_asof(
+            epc_key,
+            left_on="_sale_date",
+            right_on="inspection_date",
+            by=["postcode"],
+            strategy="nearest",
+            suffix="_epc",
+        )
+
+        result = pl.concat([addr_matched, phase1b], how="diagonal_relaxed")
+        logger.info("EPC Phase-1 plan built (join_asof: address match → postcode fallback)")
+    else:
+        # No address key available on one or both sides; postcode-only asof join.
+        result = sales_sorted.join_asof(
+            epc_key,
+            left_on="_sale_date",
+            right_on="inspection_date",
+            by=["postcode"],
+            strategy="nearest",
+            suffix="_epc",
+        )
+        logger.info("EPC Phase-1 plan built (join_asof: postcode-only)")
+
+    # Drop working columns introduced by address normalisation and date casting.
     drop_cols = [
         c
-        for c in ["_addr_key", "_addr_key_epc", "_match_score", "_date_diff"]
+        for c in ["_addr_key", "_addr_key_epc", "_sale_date"]
         if c in result.collect_schema().names()
     ]
     if drop_cols:
         result = result.drop(drop_cols)
 
-    # --- Materialise Phase-1 result to disk (optional) ---
-    # Sinking here breaks the lazy plan so the streaming engine can fully flush
-    # the large postcode fan-out before the 1:1 Phase-2 join.  Without this,
-    # both the fan-out intermediate and the full EPC feature set must coexist in
-    # the plan, driving peak memory to O(sales × EPC-per-postcode × full-width).
+    # --- Optionally materialise Phase-1 result to disk ---
+    # Sinking here isolates Phase-2's 1:1 feature join from the asof-join graph,
+    # bounding peak memory to the Phase-1 output size (~sales rows × key columns).
     if epc_id_col is not None and _phase1_sink is not None:
         _phase1_sink.parent.mkdir(parents=True, exist_ok=True)
         result.sink_parquet(_phase1_sink)
         result = pl.scan_parquet(_phase1_sink)
         logger.info("Phase-1 intermediate written to %s; resuming Phase-2", _phase1_sink)
 
-    # --- Phase 2: join winning certificate back to the full EPC feature set ---
-    # result is now sales-sized (one row per transaction).  This 1:1 join on
-    # lmk_key attaches all EPC feature columns with no fan-out.
-    # We exclude from the EPC side columns already present in result to avoid
-    # spurious _epc-suffixed duplicates:
-    #   postcode        - already in sales
-    #   _addr_key       - working column not wanted in output
-    #   inspection_date - retained from the Phase-1 key join (identical value)
+    # --- Phase 2: attach full EPC features on lmk_key (1:1, no fan-out) ---
+    # result is sales-sized; this join adds the wide EPC columns without expanding rows.
+    # postcode, _addr_key, and inspection_date are already present in result from
+    # Phase 1, so we drop them from the EPC side to avoid spurious _epc suffixes.
     if epc_id_col is not None:
         epc_feature_drop = [
             c for c in ["postcode", "_addr_key", "inspection_date"] if c in epc_cols_after_norm
         ]
         epc_features = epc_lf.drop(epc_feature_drop)
         result = result.join(epc_features, on=epc_id_col, how="left", suffix="_epc")
-        logger.info(
-            "EPC join plan built (two-phase: slim key join → deduplicate → full feature join)"
-        )
+        logger.info("EPC Phase-2 plan built (1:1 feature join on %s)", epc_id_col)
     else:
-        logger.info("EPC join plan built (single-phase: full join → deduplicate per sale)")
+        logger.info("EPC join complete (all features from Phase-1; no %s for Phase-2)", "lmk_key")
 
     return result
 
@@ -401,14 +402,15 @@ def run_pipeline(
 ) -> pl.DataFrame:
     """Run the full data linking pipeline.
 
-    When EPC data is provided the join runs in two streaming passes:
+    When EPC data is provided the join uses join_asof and runs in two passes:
 
-    1. Phase 1 — postcode fan-out join → score → sort → unique → sink to a
-       temporary parquet file.  Peak memory is proportional to a single
-       streaming batch, not the full cross-product of sales × EPC records per
-       postcode.
-    2. Phase 2 — 1:1 join of the (sales-sized) Phase-1 result to the full EPC
-       feature set → sink directly to the output destination.
+    1. Phase 1 — join_asof on (postcode, address), fallback to (postcode),
+       strategy="nearest": each sale is matched directly to its temporally
+       closest EPC certificate with no intermediate fan-out.  The result is
+       always sales-sized.  Sunk to a temporary parquet file so Phase-2 sees
+       a clean, small input.
+    2. Phase 2 — 1:1 join of the Phase-1 result to the full EPC feature set
+       on lmk_key → sink to the output destination via streaming.
 
     The temporary Phase-1 file lives inside a ``tempfile.TemporaryDirectory``
     that is cleaned up once Phase-2 finishes writing the final output.
