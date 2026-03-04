@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 from src.data.sources.land_registry import LandRegistryPricePaid
@@ -34,8 +35,14 @@ def sample_csv(tmp_raw_dir):
     return filepath
 
 
+def test_load_returns_lazy_frame(source, sample_csv):
+    """load() must return a LazyFrame — no data read at scan time."""
+    result = source.load(filepath=sample_csv)
+    assert isinstance(result, pl.LazyFrame)
+
+
 def test_load_parses_columns(source, sample_csv):
-    df = source.load(filepath=sample_csv)
+    df = source.load(filepath=sample_csv).collect()
     assert "transaction_id" in df.columns
     assert "price" in df.columns
     assert "postcode" in df.columns
@@ -44,13 +51,13 @@ def test_load_parses_columns(source, sample_csv):
 
 
 def test_load_strips_braces(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    assert df["transaction_id"].iloc[0] == "ABC-123-DEF"
-    assert df["postcode"].iloc[0] == "SW1A 1AA"
+    df = source.load(filepath=sample_csv).collect()
+    assert df["transaction_id"][0] == "ABC-123-DEF"
+    assert df["postcode"][0] == "SW1A 1AA"
 
 
 def test_load_with_nrows(source, sample_csv):
-    df = source.load(filepath=sample_csv, nrows=2)
+    df = source.load(filepath=sample_csv, nrows=2).collect()
     assert len(df) == 2
 
 
@@ -59,56 +66,55 @@ def test_load_file_not_found(source):
         source.load(filepath=Path("/nonexistent/file.csv"))
 
 
+def test_clean_returns_lazy_frame(source, sample_csv):
+    """clean() must accept and return a LazyFrame."""
+    result = source.clean(source.load(filepath=sample_csv))
+    assert isinstance(result, pl.LazyFrame)
+
+
 def test_clean_removes_deletions(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
+    df = source.clean(source.load(filepath=sample_csv)).collect()
     # Row with record_status "D" should be removed
-    assert "DEL-678-ETE" not in cleaned["transaction_id"].values
+    assert "DEL-678-ETE" not in df["transaction_id"].to_list()
 
 
 def test_clean_removes_missing_postcodes(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
-    assert cleaned["postcode"].notna().all()
+    df = source.clean(source.load(filepath=sample_csv)).collect()
+    assert df["postcode"].is_not_null().all()
 
 
 def test_clean_removes_non_residential(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
+    df = source.clean(source.load(filepath=sample_csv)).collect()
     # Property type "O" should be removed
-    assert "O" not in cleaned["property_type"].values
+    assert "O" not in df["property_type"].to_list()
 
 
 def test_clean_filters_extreme_prices(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
+    df = source.clean(source.load(filepath=sample_csv)).collect()
     # Price of 5000 should be filtered out (< 10,000 threshold)
-    assert (cleaned["price"] >= 10_000).all()
-    assert (cleaned["price"] < 50_000_000).all()
+    assert (df["price"] >= 10_000).all()
+    assert (df["price"] < 50_000_000).all()
 
 
 def test_clean_standardises_postcodes(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
-    for pc in cleaned["postcode"]:
+    df = source.clean(source.load(filepath=sample_csv)).collect()
+    for pc in df["postcode"]:
         assert pc == pc.upper()
         assert "  " not in pc  # no double spaces
 
 
 def test_clean_adds_year_month(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
-    assert "year" in cleaned.columns
-    assert "month" in cleaned.columns
-    assert cleaned["year"].iloc[0] == 2024
+    df = source.clean(source.load(filepath=sample_csv)).collect()
+    assert "year" in df.columns
+    assert "month" in df.columns
+    assert df["year"][0] == 2024
 
 
 def test_clean_adds_outward_postcode(source, sample_csv):
-    df = source.load(filepath=sample_csv)
-    cleaned = source.clean(df)
-    assert "postcode_outward" in cleaned.columns
+    df = source.clean(source.load(filepath=sample_csv)).collect()
+    assert "postcode_outward" in df.columns
     # SW1A 1AA -> SW1A
-    assert "SW1A" in cleaned["postcode_outward"].values
+    assert "SW1A" in df["postcode_outward"].to_list()
 
 
 def test_download_url_for_year(source):

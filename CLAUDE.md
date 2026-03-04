@@ -54,6 +54,50 @@ tests/                  # pytest tests mirroring src structure
 - All public data sources inherit from `DataSource` base class
 - Each source implements `download()`, `load()`, `clean()` methods
 
+## Commit messages
+
+All commits must follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+```
+<type>(<scope>): <short summary>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types:**
+
+| Type | When to use |
+|---|---|
+| `feat` | New feature or user-facing capability |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code change that is neither a fix nor a feature |
+| `test` | Adding or correcting tests |
+| `chore` | Maintenance, dependency updates, tooling |
+| `style` | Formatting, whitespace (no logic change) |
+| `perf` | Performance improvement |
+
+**Scopes** (optional but encouraged):
+
+- `app` — FastAPI backend (`src/app/`)
+- `frontend` — React frontend (`frontend/`)
+- `data` — Data pipeline (`src/data/`)
+- `ci` — CI/CD configuration
+- `deps` — Dependency changes
+
+**Examples:**
+
+```
+feat(app): add valuation sensitivity endpoint
+fix(data): handle missing postcode in land registry clean step
+docs: add user guide for property valuation app
+chore(deps): bump ruff to 0.4.0
+```
+
+Breaking changes must include `!` after the type/scope and a `BREAKING CHANGE:` footer.
+
 ## Environment variables
 
 - `EPC_API_TOKEN` - required for EPC data. Register at https://epc.opendatacommunities.org/login

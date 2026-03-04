@@ -12,7 +12,7 @@ Published monthly, covering England, Scotland, Wales and Northern Ireland.
 import logging
 from pathlib import Path
 
-import pandas as pd
+import polars as pl
 
 from src.data.config import UK_HPI_DOWNLOAD_URL
 from src.data.sources.base import DataSource
@@ -36,38 +36,78 @@ class UKHousePriceIndex(DataSource):
         dest = self.raw_dir / "uk_hpi_full.csv"
         return self._download_file(download_url, dest, desc="UK HPI")
 
-    def load(self, filepath: Path | None = None, **kwargs) -> pd.DataFrame:
-        """Load UK HPI CSV into DataFrame."""
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
+        """Build a lazy scan of the UK HPI data.
+
+        Prefers a parquet file over CSV when available.  Pass an explicit
+        *filepath* to override the default file-discovery logic.
+
+        The data is not read into memory until the lazy plan is collected.
+
+        Args:
+            filepath: Path to a ``.parquet`` or ``.csv`` file.  When *None* the
+                method looks for ``uk_hpi_full.parquet`` first, then falls back
+                to ``uk_hpi_full.csv``.  When a ``.csv`` path is supplied and a
+                same-stem ``.parquet`` exists alongside it, the parquet is used
+                transparently.
+        """
         if filepath is None:
-            filepath = self.raw_dir / "uk_hpi_full.csv"
+            parquet = self.raw_dir / "uk_hpi_full.parquet"
+            csv = self.raw_dir / "uk_hpi_full.csv"
+            if parquet.exists():
+                filepath = parquet
+            elif csv.exists():
+                filepath = csv
+            else:
+                raise FileNotFoundError(
+                    f"UK HPI data not found in {self.raw_dir}. Run download() first."
+                )
+        elif filepath.suffix == ".csv":
+            parquet = filepath.with_suffix(".parquet")
+            if parquet.exists():
+                filepath = parquet
 
         if not filepath.exists():
             raise FileNotFoundError(
                 f"UK HPI data file not found: {filepath}. Run download() first."
             )
 
-        logger.info("Loading UK HPI data from %s", filepath)
-        df = pd.read_csv(filepath, low_memory=False)
-        logger.info("Loaded %d UK HPI records", len(df))
-        return df
+        logger.info("Building lazy scan of UK HPI data from %s", filepath)
 
-    def clean(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean and standardise UK HPI data."""
-        logger.info("Cleaning UK HPI data (%d rows)", len(df))
+        if filepath.suffix == ".parquet":
+            return pl.scan_parquet(filepath)
+
+        return pl.scan_csv(filepath, infer_schema_length=10000)
+
+    def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Clean and standardise UK HPI data (lazy)."""
+        logger.info("Building lazy cleaning plan for UK HPI data")
+
+        # Resolve the schema once upfront to avoid repeated (expensive) schema resolutions.
+        col_names = lf.collect_schema().names()
 
         # Standardise column names
-        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_", regex=False)
+        rename_map = {col: col.strip().lower().replace(" ", "_") for col in col_names}
+        lf = lf.rename(rename_map)
+        col_names = [rename_map.get(c, c) for c in col_names]
 
-        # Parse date column
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df["year"] = df["date"].dt.year
-            df["month"] = df["date"].dt.month
+        # Parse date column — UK HPI uses DD/MM/YYYY format in CSV.
+        # When loaded from parquet the column is already a Date; skip str.to_date()
+        # in that case to avoid calling the string accessor on a non-string dtype.
+        if "date" in col_names:
+            if lf.collect_schema().get("date") == pl.String:
+                lf = lf.with_columns(pl.col("date").str.to_date(format="%d/%m/%Y", strict=False))
+            lf = lf.with_columns(
+                [
+                    pl.col("date").dt.year().alias("year"),
+                    pl.col("date").dt.month().alias("month"),
+                ]
+            )
 
         # Ensure numeric columns are numeric
         price_cols = [
             c
-            for c in df.columns
+            for c in col_names
             if any(
                 kw in c
                 for kw in [
@@ -78,22 +118,20 @@ class UKHousePriceIndex(DataSource):
                 ]
             )
         ]
-        for col in price_cols:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if price_cols:
+            lf = lf.with_columns([pl.col(col).cast(pl.Float64, strict=False) for col in price_cols])
 
         # Drop rows with no region/area name
-        area_col = None
-        for candidate in ["regionname", "region_name", "areacode", "area_code"]:
-            if candidate in df.columns:
-                area_col = candidate
-                break
+        area_col = next(
+            (c for c in ["regionname", "region_name", "areacode", "area_code"] if c in col_names),
+            None,
+        )
         if area_col:
-            df = df.dropna(subset=[area_col])
+            lf = lf.drop_nulls(subset=[area_col])
 
-        logger.info("After cleaning: %d rows", len(df))
-        return df
+        return lf
 
-    def get_area_prices(self, df: pd.DataFrame, area_name: str) -> pd.DataFrame:
+    def get_area_prices(self, df: pl.DataFrame, area_name: str) -> pl.DataFrame:
         """Filter UK HPI data to a specific area/region."""
         area_col = None
         for candidate in ["regionname", "region_name"]:
@@ -103,5 +141,4 @@ class UKHousePriceIndex(DataSource):
         if area_col is None:
             raise KeyError("No region/area name column found in UK HPI data")
 
-        mask = df[area_col].str.contains(area_name, case=False, na=False)
-        return df[mask].copy()
+        return df.filter(pl.col(area_col).str.contains(f"(?i){area_name}"))

@@ -16,18 +16,35 @@ Requires a free API key: register at https://epc.opendatacommunities.org/login
 Set EPC_API_TOKEN in your .env file.
 """
 
+import base64
 import logging
 import os
+import shutil
 import time
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
-import pandas as pd
+import polars as pl
 import requests
 
-from src.data.config import EPC_DOMESTIC_SEARCH
+from src.data.config import EPC_DOMESTIC_SCHEMA, EPC_DOMESTIC_SEARCH
 from src.data.sources.base import DataSource
 
+_EPC_NULL_VALUES = ["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"]
+
+# Force string typing for columns that polars might infer as int/float from schema inference.
+# Date and numeric columns are intentionally excluded: clean() parses them from their
+# string CSV representations, and pre-typing them here would break clean()'s str.to_date() calls.
+_EPC_SCAN_OVERRIDES: dict[str, type[pl.DataType]] = {
+    col: dtype for col, dtype in EPC_DOMESTIC_SCHEMA.items() if dtype in (pl.Utf8, pl.String)
+}
+
 logger = logging.getLogger(__name__)
+
+# EPC API endpoints
+EPC_FILES_API = "https://epc.opendatacommunities.org/api/v1/files"
+EPC_FILES_DOWNLOAD = "https://epc.opendatacommunities.org/api/v1/files/{file_name}"
 
 # EPC API rate limits: 30 requests per minute
 EPC_RATE_LIMIT_DELAY = 2.1  # seconds between requests
@@ -39,53 +56,201 @@ class EPCData(DataSource):
 
     name = "epc_domestic"
 
-    def __init__(self, raw_dir: Path | None = None, api_token: str | None = None):
+    def __init__(
+        self,
+        raw_dir: Path | None = None,
+        api_user: str | None = None,
+        api_pass: str | None = None,
+    ):
         super().__init__(raw_dir)
-        self.api_token = api_token or os.environ.get("EPC_API_TOKEN", "")
-        if not self.api_token:
+        self.api_pass = api_pass or os.environ.get("EPC_API_PASS", "")
+        self.api_user = api_user or os.environ.get("EPC_API_USER", "")
+        if not self.api_user or not self.api_pass:
             logger.warning(
-                "No EPC_API_TOKEN found. Set it in .env or pass api_token= "
-                "to use the EPC API. Register at: "
-                "https://epc.opendatacommunities.org/login"
+                "EPC_API_USER and EPC_API_PASS not found. Set them in .env or pass api_user= and api_pass= to use the EPC API. Register at: https://epc.opendatacommunities.org/login"
             )
+        # convert into token using base64 encoding of "user:pass"
+        self.api_token = (
+            self._encode_token(self.api_user, self.api_pass)
+            if self.api_user and self.api_pass
+            else None
+        )
+
+    def _encode_token(self, user: str, password: str) -> str:
+        token_str = f"{user}:{password}"
+        return base64.b64encode(token_str.encode()).decode()
 
     def _get_headers(self) -> dict:
         return {
             "Authorization": f"Basic {self.api_token}",
-            "Accept": "text/csv",
         }
+
+    def _list_available_files(self) -> dict:
+        """Fetch list of available bulk download files from the API."""
+        if not self.api_token:
+            raise ValueError(
+                "EPC API token not set. Set EPC_API_USER and EPC_API_PASS in .env or pass them to the constructor."
+            )
+
+        headers = self._get_headers()
+        headers["Accept"] = "application/json"
+
+        logger.info("Fetching list of available EPC bulk download files")
+        response = requests.get(EPC_FILES_API, headers=headers, timeout=60)
+        response.raise_for_status()
+
+        data = response.json()
+        return data.get("files", {})
 
     def download(
         self,
+        use_search: bool = False,
+        bulk_file: str | None = None,
         postcodes: list[str] | None = None,
         local_authority: str | None = None,
         from_month: int | None = None,
         from_year: int | None = None,
-        max_pages: int = 10,
+        max_pages: int = 100000,
         **kwargs,
     ) -> Path:
-        """Download EPC data via the API.
+        """Download EPC data.
+
+        Default behavior downloads the entire dataset via bulk file.
+        For filtered/specific data, use the search API.
 
         Args:
-            postcodes: List of postcodes to query (e.g. ["SW1A 1AA"]).
-            local_authority: Local authority code (e.g. "E09000033").
-            from_month: Filter certificates from this month (1-12).
-            from_year: Filter certificates from this year.
-            max_pages: Maximum number of pages to fetch (each page = 5000 rows).
+            use_search: If True, use the search API instead of bulk download.
+                Defaults to False (use bulk download).
+            bulk_file: Specific bulk file to download (e.g., "all-domestic-certificates.zip").
+                Defaults to None (auto-select the most complete file).
+            postcodes: List of postcodes to query (e.g. ["SW1A 1AA"]). Only used with use_search=True.
+            local_authority: Local authority code (e.g. "E09000033"). Only used with use_search=True.
+            from_month: Filter certificates from this month (1-12). Only used with use_search=True.
+            from_year: Filter certificates from this year. Only used with use_search=True.
+            max_pages: Maximum number of pages to fetch (each page = 5000 rows). Only used with use_search=True.
+
+        Returns:
+            Path to the downloaded/extracted EPC data file (CSV).
         """
         if not self.api_token:
             raise ValueError(
-                "EPC_API_TOKEN is required. Register at "
-                "https://epc.opendatacommunities.org/login "
-                "and set EPC_API_TOKEN in your .env file."
+                "EPC API token not set. Set EPC_API_USER and EPC_API_PASS in .env or pass them to the constructor."
             )
 
+        if use_search:
+            # Delegate to search-based download
+            if postcodes:
+                return self._search_by_postcodes(postcodes, max_pages)
+            return self._search_with_filters(
+                local_authority=local_authority,
+                from_month=from_month,
+                from_year=from_year,
+                max_pages=max_pages,
+            )
+
+        # Bulk download (default)
+        return self._download_bulk(bulk_file=bulk_file)
+
+    def _download_bulk(self, bulk_file: str | None = None) -> Path:
+        """Download entire EPC dataset from bulk file.
+
+        Args:
+            bulk_file: Specific file to download. If None, downloads all-domestic-certificates.zip.
+
+        Returns:
+            Path to the extracted CSV file.
+        """
+        if bulk_file is None:
+            bulk_file = "all-domestic-certificates.zip"
+
+        # Return early if bulk data already exists (prefer parquet).
+        parquet_path = self.raw_dir / "epc_domestic_bulk.parquet"
+        if parquet_path.exists():
+            logger.info("EPC bulk data already exists: %s", parquet_path)
+            return parquet_path
+        csv_path = self.raw_dir / "epc_domestic_bulk.csv"
+        if csv_path.exists():
+            logger.info("EPC bulk data already exists: %s", csv_path)
+            return csv_path
+
+        # Download the bulk file
+        logger.info("Downloading EPC bulk file: %s", bulk_file)
+        download_url = EPC_FILES_DOWNLOAD.format(file_name=bulk_file)
+
+        headers = self._get_headers()
+        response = requests.get(download_url, headers=headers, timeout=300, stream=True)
+        response.raise_for_status()
+
+        # Save zip file temporarily
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = self.raw_dir / bulk_file
+        total_size = int(response.headers.get("content-length", 0))
+
+        if not zip_path.exists():
+            with open(zip_path, "wb") as f:
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size:
+                            progress = (downloaded / total_size) * 100
+                            logger.debug("Download progress: %.1f%%", progress)
+
+            logger.info("Downloaded %s (%d bytes)", bulk_file, zip_path.stat().st_size)
+        else:
+            logger.info("Bulk file already downloaded: %s", zip_path)
+
+        # Extract CSV files from zip
+        logger.info("Extracting CSV files from %s", zip_path)
+        temp_extract = self.raw_dir / "temp_extract"
+        temp_extract.mkdir(exist_ok=True)
+
+        with ZipFile(zip_path) as zf:
+            # Find and extract all CSV files
+            csv_files = [
+                n for n in zf.namelist() if n.endswith(".csv") and "certificates" in n.lower()
+            ]
+            if not csv_files:
+                raise RuntimeError(f"No CSV files found in {bulk_file}")
+
+            for csv_file in csv_files:
+                logger.info("Extracting %s", csv_file)
+                zf.extract(csv_file, temp_extract)
+
+        extracted_csvs = list(temp_extract.rglob("*certificates*.csv"))
+        if not extracted_csvs:
+            raise RuntimeError(f"No CSV files found after extracting {bulk_file}")
+
+        logger.info("Converting %d CSV file(s) to parquet: %s", len(extracted_csvs), parquet_path)
+        dfs = [
+            pl.read_csv(
+                csv_file,
+                schema=EPC_DOMESTIC_SCHEMA,
+                null_values=["", "N/A", "NO DATA!", "INVALID!", "null", "NULL"],
+            )
+            for csv_file in extracted_csvs
+        ]
+        merged_df = pl.concat(dfs, how="diagonal_relaxed") if len(dfs) > 1 else dfs[0]
+        merged_df.write_parquet(parquet_path)
+
+        # Cleanup
+        shutil.rmtree(temp_extract, ignore_errors=True)
+        zip_path.unlink()
+
+        logger.info("Saved EPC bulk data to %s", parquet_path)
+        return parquet_path
+
+    def _search_with_filters(
+        self,
+        local_authority: str | None = None,
+        from_month: int | None = None,
+        from_year: int | None = None,
+        max_pages: int = 100000,
+    ) -> Path:
+        """Download EPC data using search API with filters."""
         params = {"size": EPC_PAGE_SIZE}
         filename_parts = ["epc_domestic"]
-
-        if postcodes:
-            # API supports single postcode per request; we batch
-            return self._download_by_postcodes(postcodes, max_pages)
 
         if local_authority:
             params["local-authority"] = local_authority
@@ -97,24 +262,30 @@ class EPCData(DataSource):
         if from_month:
             params["from-month"] = from_month
 
-        dest = self.raw_dir / ("_".join(filename_parts) + ".csv")
+        dest = self.raw_dir / ("_".join(filename_parts) + ".parquet")
+        dest_csv = self.raw_dir / ("_".join(filename_parts) + ".csv")
 
         if dest.exists():
-            logger.info("EPC data already exists: %s", dest)
+            logger.info("EPC search data already exists: %s", dest)
             return dest
+        if dest_csv.exists():
+            logger.info("EPC search data already exists: %s", dest_csv)
+            return dest_csv
 
         all_rows = []
         for page in range(max_pages):
-            params["from"] = page * EPC_PAGE_SIZE
+            params["search-after"] = page * EPC_PAGE_SIZE
             logger.info(
                 "Fetching EPC page %d (from row %d)",
                 page + 1,
-                params["from"],
+                params["search-after"],
             )
 
+            headers = self._get_headers()
+            headers["Accept"] = "text/csv"
             response = requests.get(
                 EPC_DOMESTIC_SEARCH,
-                headers=self._get_headers(),
+                headers=headers,
                 params=params,
                 timeout=60,
             )
@@ -139,16 +310,20 @@ class EPCData(DataSource):
             lines.extend(chunk_lines[1:])
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("\n".join(lines))
-        logger.info("Saved EPC data to %s", dest)
+        pl.read_csv(BytesIO("\n".join(lines).encode())).write_parquet(dest)
+        logger.info("Saved EPC search data to %s", dest)
         return dest
 
-    def _download_by_postcodes(self, postcodes: list[str], max_pages: int) -> Path:
-        """Download EPC data for a list of postcodes."""
-        dest = self.raw_dir / "epc_domestic_postcodes.csv"
+    def _search_by_postcodes(self, postcodes: list[str], max_pages: int) -> Path:
+        """Download EPC data for a list of postcodes using search API."""
+        dest = self.raw_dir / "epc_domestic_postcodes.parquet"
+        dest_csv = self.raw_dir / "epc_domestic_postcodes.csv"
         if dest.exists():
             logger.info("EPC postcode data already exists: %s", dest)
             return dest
+        if dest_csv.exists():
+            logger.info("EPC postcode data already exists: %s", dest_csv)
+            return dest_csv
 
         all_dfs = []
         for postcode in postcodes:
@@ -157,9 +332,11 @@ class EPCData(DataSource):
                 "postcode": postcode,
                 "size": EPC_PAGE_SIZE,
             }
+            headers = self._get_headers()
+            headers["Accept"] = "text/csv"
             response = requests.get(
                 EPC_DOMESTIC_SEARCH,
-                headers=self._get_headers(),
+                headers=headers,
                 params=params,
                 timeout=60,
             )
@@ -167,9 +344,7 @@ class EPCData(DataSource):
 
             text = response.text.strip()
             if text and text.count("\n") > 1:
-                from io import StringIO
-
-                chunk_df = pd.read_csv(StringIO(text))
+                chunk_df = pl.read_csv(BytesIO(text.encode()))
                 all_dfs.append(chunk_df)
 
             time.sleep(EPC_RATE_LIMIT_DELAY)
@@ -177,49 +352,90 @@ class EPCData(DataSource):
         if not all_dfs:
             raise RuntimeError("No EPC data returned for given postcodes.")
 
-        df = pd.concat(all_dfs, ignore_index=True)
-        df.to_csv(dest, index=False)
+        df = pl.concat(all_dfs, how="diagonal_relaxed")
+        df.write_parquet(dest)
         logger.info("Saved EPC data for %d postcodes to %s", len(postcodes), dest)
         return dest
 
-    def load(self, filepath: Path | None = None, **kwargs) -> pd.DataFrame:
-        """Load EPC CSV into DataFrame."""
+    def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
+        """Build a lazy scan of the EPC data.
+
+        Prefers a parquet file over CSV when available.  Pass an explicit
+        *filepath* to override the default file-discovery logic.
+
+        The data is not read into memory until the lazy plan is collected.
+
+        Args:
+            filepath: Path to a ``.parquet`` or ``.csv`` file.  When *None* the
+                method globs ``epc_domestic*.parquet`` first, then falls back to
+                ``epc_domestic*.csv``.  When a ``.csv`` path is supplied and a
+                same-stem ``.parquet`` exists alongside it, the parquet is used
+                transparently.
+        """
         if filepath is None:
-            # Find the most recent EPC file
-            epc_files = sorted(self.raw_dir.glob("epc_domestic*.csv"))
-            if not epc_files:
+            parquet_files = sorted(self.raw_dir.glob("epc_domestic*.parquet"))
+            csv_files = sorted(self.raw_dir.glob("epc_domestic*.csv"))
+            if parquet_files:
+                filepath = parquet_files[-1]
+            elif csv_files:
+                filepath = csv_files[-1]
+            else:
                 raise FileNotFoundError("No EPC data files found. Run download() first.")
-            filepath = epc_files[-1]
+        elif filepath.suffix == ".csv":
+            parquet = filepath.with_suffix(".parquet")
+            if parquet.exists():
+                filepath = parquet
 
-        logger.info("Loading EPC data from %s", filepath)
-        df = pd.read_csv(filepath, low_memory=False)
-        logger.info("Loaded %d EPC records", len(df))
-        return df
+        if not filepath.exists():
+            raise FileNotFoundError(f"EPC data file not found: {filepath}. Run download() first.")
 
-    def clean(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean and standardise EPC data."""
-        logger.info("Cleaning EPC data (%d rows)", len(df))
+        logger.info("Building lazy scan of EPC data from %s", filepath)
 
-        # Standardise column names to snake_case
-        df.columns = (
-            df.columns.str.lower()
-            .str.replace("-", "_", regex=False)
-            .str.replace(" ", "_", regex=False)
+        if filepath.suffix == ".parquet":
+            return pl.scan_parquet(filepath)
+
+        return pl.scan_csv(
+            filepath,
+            schema_overrides=_EPC_SCAN_OVERRIDES,
+            null_values=_EPC_NULL_VALUES,
         )
 
+    def clean(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Clean and standardise EPC data (lazy).
+
+        Note: All EPC certificate records are retained (no deduplication by building
+        reference). The pipeline selects the temporally closest certificate per sale,
+        so preserving the full history is essential.
+        """
+        logger.info("Building lazy cleaning plan for EPC data")
+
+        # Resolve the schema once upfront to avoid repeated (expensive) schema resolutions.
+        schema = lf.collect_schema()
+        col_names = schema.names()
+
+        # Standardise column names to snake_case
+        rename_map = {col: col.lower().replace("-", "_").replace(" ", "_") for col in col_names}
+        lf = lf.rename(rename_map)
+        # Re-resolve after rename so subsequent checks are accurate.
+        col_names = [rename_map.get(c, c) for c in col_names]
+
         # Standardise postcode format
-        if "postcode" in df.columns:
-            df["postcode"] = (
-                df["postcode"]
-                .astype(str)
-                .str.upper()
-                .str.strip()
-                .str.replace(r"\s+", " ", regex=True)
+        if "postcode" in col_names:
+            lf = lf.with_columns(
+                pl.col("postcode")
+                .cast(pl.String)
+                .str.to_uppercase()
+                .str.strip_chars()
+                .str.replace_all(r"\s+", " ")
             )
 
-        # Parse inspection-date
-        if "inspection_date" in df.columns:
-            df["inspection_date"] = pd.to_datetime(df["inspection_date"], errors="coerce")
+        # Parse inspection_date when loaded as string; keep typed date columns as-is.
+        if "inspection_date" in col_names:
+            inspection_dtype = lf.collect_schema().get("inspection_date")
+            if inspection_dtype == pl.String:
+                lf = lf.with_columns(
+                    pl.col("inspection_date").str.to_date(format="%Y-%m-%d", strict=False)
+                )
 
         # Numeric conversions
         numeric_cols = [
@@ -233,23 +449,17 @@ class EPCData(DataSource):
             "energy_consumption_current",
             "energy_consumption_potential",
         ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+        lf = lf.with_columns(
+            [pl.col(col).cast(pl.Float64, strict=False) for col in numeric_cols if col in col_names]
+        )
 
         # Drop rows with no postcode (can't link to sales data)
-        df = df.dropna(subset=["postcode"])
+        lf = lf.drop_nulls(subset=["postcode"])
 
         # Filter to domestic properties with valid energy ratings
-        valid_ratings = {"A", "B", "C", "D", "E", "F", "G"}
-        if "current_energy_rating" in df.columns:
-            df = df[df["current_energy_rating"].isin(valid_ratings)].copy()
-
-        # Keep most recent EPC per property (by building reference)
-        if "building_reference_number" in df.columns and "inspection_date" in df.columns:
-            df = df.sort_values("inspection_date", ascending=False).drop_duplicates(
-                subset=["building_reference_number"], keep="first"
+        if "current_energy_rating" in col_names:
+            lf = lf.filter(
+                pl.col("current_energy_rating").is_in(["A", "B", "C", "D", "E", "F", "G"])
             )
 
-        logger.info("After cleaning: %d rows", len(df))
-        return df
+        return lf
