@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from src.app.config import SENSITIVITY_CONFIGS
 from src.app.models import (
     SensitivityPoint,
     SensitivityResult,
@@ -14,29 +15,6 @@ from src.app.services.valuation_model import AREA_BASE_PRICES, ValuationModel
 router = APIRouter()
 
 _model = ValuationModel()
-
-SENSITIVITY_CONFIGS = [
-    {
-        "attribute": "bedrooms",
-        "attribute_label": "Bedrooms",
-        "values": [1, 2, 3, 4, 5, 6],
-        "labels": ["1 bed", "2 bed", "3 bed", "4 bed", "5 bed", "6 bed"],
-    },
-    {
-        "attribute": "floor_area",
-        "attribute_label": "Floor Area (sqm)",
-        "values": [40, 60, 80, 100, 120, 150, 200, 250, 300, 350],
-        "labels": ["40 sqm", "60 sqm", "80 sqm", "100 sqm", "120 sqm", "150 sqm", "200 sqm",
-                   "250 sqm", "300 sqm", "350 sqm"],
-    },
-    {
-        "attribute": "energy_efficiency_score",
-        "attribute_label": "Energy Efficiency Score",
-        "values": [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
-        "labels": ["10 (G)", "20 (G)", "30 (F)", "40 (E)", "50 (E)", "60 (D)", "70 (C)",
-                   "80 (B)", "90 (B)", "100 (A)"],
-    },
-]
 
 
 @router.post("/predict", response_model=ValuationPrediction)
@@ -78,7 +56,7 @@ async def valuation_sensitivity(
 
     sensitivities: list[SensitivityResult] = []
     for config in SENSITIVITY_CONFIGS:
-        attr = config["attribute"]
+        attr = config.attribute
         pairs = _model.sensitivity(
             base_property_type=body.property_type,
             base_bedrooms=body.bedrooms,
@@ -86,7 +64,7 @@ async def valuation_sensitivity(
             base_energy_score=body.energy_efficiency_score,
             base_postcode_prefix=body.postcode_prefix,
             attribute=attr,
-            values=[float(v) for v in config["values"]],
+            values=[float(v) for v in config.values],
         )
         current_value: float
         if attr == "bedrooms":
@@ -98,12 +76,12 @@ async def valuation_sensitivity(
 
         points = [
             SensitivityPoint(value=v, price=p, label=label)
-            for (v, p), label in zip(pairs, config["labels"])
+            for (v, p), label in zip(pairs, config.labels, strict=False)
         ]
         sensitivities.append(
             SensitivityResult(
                 attribute=attr,
-                attribute_label=config["attribute_label"],
+                attribute_label=config.attribute_label,
                 current_value=current_value,
                 points=points,
             )

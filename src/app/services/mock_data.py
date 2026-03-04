@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import random
 import string
 from datetime import date, timedelta
 
@@ -235,9 +234,7 @@ class MockDataService:
 
         heated_rooms = bedrooms + int(self._rng.integers(1, 3))
 
-        energy_rating = str(
-            self._rng.choice(ENERGY_RATINGS_UNIQUE, p=ENERGY_RATING_WEIGHTS_UNIQUE)
-        )
+        energy_rating = str(self._rng.choice(ENERGY_RATINGS_UNIQUE, p=ENERGY_RATING_WEIGHTS_UNIQUE))
 
         # Energy efficiency score based on rating
         rating_to_score = {

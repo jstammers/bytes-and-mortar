@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.app.routers import properties, valuation
 from src.app.services.mock_data import MockDataService
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 @asynccontextmanager
@@ -24,7 +27,7 @@ app = FastAPI(
 )
 
 app.add_middleware(
-    CORSMiddleware,
+    CORSMiddleware,  # ty:ignore[invalid-argument-type]
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],

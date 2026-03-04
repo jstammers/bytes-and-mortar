@@ -4,10 +4,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.app.models import (
     AreaComparisonData,
+    PriceHistoryPoint,
     PropertyDetail,
     PropertyHistory,
     PropertySearchResult,
-    PriceHistoryPoint,
     SimilarProperty,
 )
 
