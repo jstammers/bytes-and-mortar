@@ -81,11 +81,11 @@ known-first-party = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: end-to-end tests requiring fixture data in data/test_fixtures/raw/ (generate with: uv run python scripts/create_m19_fixtures.py)",
+]
 
 [tool.ty.rules]
 # ty is in alpha and lacks stubs for mlflow, xgboost, and other third-party libs.
 # These are false positives — suppress until upstream stubs improve.
 possibly-missing-attribute = "ignore"
-markers = [
-    "integration: end-to-end tests requiring fixture data in data/test_fixtures/raw/ (generate with: uv run python scripts/create_m19_fixtures.py)",
-]
