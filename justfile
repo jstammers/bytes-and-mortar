@@ -58,6 +58,21 @@ download-hpi:
 run *args='':
     uv run bytes-and-mortar run {{ args }}
 
+# Install ML dependencies (scikit-learn, xgboost, optuna, mlflow)
+install-ml:
+    uv sync --extra dev --extra ml
+
+# Install notebook dependencies (marimo, pymc)
+install-notebooks:
+    uv sync --extra dev --extra ml --extra notebooks
+
+# Train a model (default: xgboost, sliding window CV, 50 HPO trials)
+train *args='':
+    uv run bytes-and-mortar train run {{ args }}
+
+# Launch MLflow UI (uses sqlite backend for model registry support)
+mlflow-ui:
+    uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
 # Install app (API) dependencies
 install-app:
     uv sync --extra app
