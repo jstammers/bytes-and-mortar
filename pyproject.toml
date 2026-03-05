@@ -26,6 +26,23 @@ dev = [
     "ruff>=0.11",
     "ty>=0.0.1a6",
 ]
+ml = [
+    "scikit-learn>=1.5",
+    "xgboost>=2.0",
+    "optuna>=3.6",
+    "mlflow>=2.13",
+    "numpy>=1.26",
+]
+notebooks = [
+    "marimo>=0.6",
+    "pymc>=5.10",
+    "arviz>=0.18",
+]
+app = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "numpy>=1.26",
+]
 
 [project.scripts]
 bytes-and-mortar = "src.data.make_dataset:app"
@@ -66,4 +83,14 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "integration: end-to-end tests requiring fixture data in data/test_fixtures/raw/ (generate with: uv run python scripts/create_m19_fixtures.py)",
+]
+
+[tool.ty.rules]
+# ty is in alpha and lacks stubs for mlflow, xgboost, and other third-party libs.
+# These are false positives — suppress until upstream stubs improve.
+possibly-missing-attribute = "ignore"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
 ]

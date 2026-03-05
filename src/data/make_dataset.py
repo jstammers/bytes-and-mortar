@@ -38,8 +38,10 @@ from src.data.pipeline import run_pipeline
 from src.data.sources.epc import EPCData
 from src.data.sources.land_registry import LandRegistryPricePaid
 from src.data.sources.uk_hpi import UKHousePriceIndex
+from src.models.train_model import train_app
 
 app = typer.Typer(help="UK property data ingestion pipeline.")
+app.add_typer(train_app, name="train")
 
 
 class OutputFormat(StrEnum):

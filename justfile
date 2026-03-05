@@ -58,6 +58,40 @@ download-hpi:
 run *args='':
     uv run bytes-and-mortar run {{ args }}
 
+# Install ML dependencies (scikit-learn, xgboost, optuna, mlflow)
+install-ml:
+    uv sync --extra dev --extra ml
+
+# Install notebook dependencies (marimo, pymc)
+install-notebooks:
+    uv sync --extra dev --extra ml --extra notebooks
+
+# Train a model (default: xgboost, sliding window CV, 50 HPO trials)
+train *args='':
+    uv run bytes-and-mortar train run {{ args }}
+
+# Launch MLflow UI (uses sqlite backend for model registry support)
+mlflow-ui:
+    uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
+# Install app (API) dependencies
+install-app:
+    uv sync --extra app
+
+# Start the FastAPI development server
+dev-api:
+    uv run uvicorn src.app.main:app --reload --port 8000
+
+# Install frontend dependencies
+install-frontend:
+    cd frontend && npm install
+
+# Start the frontend development server (requires install-frontend first)
+dev-frontend:
+    cd frontend && npm run dev
+
+# Build frontend for production
+build-frontend:
+    cd frontend && npm run build
 # Create M19 postcode fixtures for integration tests (requires data/raw/ files)
 create-fixtures src_dir='':
     PYTHONPATH=. uv run python scripts/create_m19_fixtures.py {{ if src_dir != '' { "--src-dir " + src_dir } else { "" } }}
