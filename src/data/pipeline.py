@@ -61,17 +61,9 @@ def _addr_key_expr(paon_col: str = "paon", street_col: str = "street") -> pl.Exp
     """Return a polars expression that produces a normalised address key from LR columns."""
     return (
         (
-            pl.col(paon_col)
-            .fill_null("")
-            .cast(pl.String)
-            .str.to_uppercase()
-            .str.strip_chars()
+            pl.col(paon_col).fill_null("").cast(pl.String).str.to_uppercase().str.strip_chars()
             + " "
-            + pl.col(street_col)
-            .fill_null("")
-            .cast(pl.String)
-            .str.to_uppercase()
-            .str.strip_chars()
+            + pl.col(street_col).fill_null("").cast(pl.String).str.to_uppercase().str.strip_chars()
         )
         .str.replace_all(r"\s+", " ")
         .str.strip_chars()
@@ -154,9 +146,7 @@ def link_sales_to_epc(
     epc_cols = epc_lf.collect_schema().names()
 
     if "postcode" not in sales_cols or "postcode" not in epc_cols:
-        logger.warning(
-            "Cannot link sales to EPC: 'postcode' column missing. Returning sales."
-        )
+        logger.warning("Cannot link sales to EPC: 'postcode' column missing. Returning sales.")
         return sales_lf
 
     # --- Normalise addresses (with abbreviation expansion) ---
@@ -184,9 +174,7 @@ def link_sales_to_epc(
     epc_id_col = "lmk_key" if "lmk_key" in epc_cols_after_norm else None
 
     # Pre-filter EPC to only postcodes that appear in sales.
-    epc_lf = epc_lf.join(
-        sales_lf.select("postcode").unique(), on="postcode", how="semi"
-    )
+    epc_lf = epc_lf.join(sales_lf.select("postcode").unique(), on="postcode", how="semi")
 
     # --- Build slim EPC key frame for the Phase-1 join ---
     # Only include the columns needed for the asof join + Phase-2 pivot key.
@@ -198,9 +186,7 @@ def link_sales_to_epc(
             if c in epc_cols_after_norm
         ]
     else:
-        key_cols = (
-            epc_cols_after_norm  # no unique key — carry all columns through Phase 1
-        )
+        key_cols = epc_cols_after_norm  # no unique key — carry all columns through Phase 1
 
     # Right frame for join_asof must be sorted on the asof key.
     # Exclude null inspection_dates — they must never win a backward match.
@@ -212,14 +198,11 @@ def link_sales_to_epc(
 
     # Cast date_of_transfer to pl.Date for type compatibility with inspection_date.
     # (date_of_transfer is pl.Datetime after load(); inspection_date is pl.Date after clean().)
-    sales_lf = sales_lf.with_columns(
-        pl.col("date_of_transfer").cast(pl.Date).alias("_sale_date")
-    )
+    sales_lf = sales_lf.with_columns(pl.col("date_of_transfer").cast(pl.Date).alias("_sale_date"))
     sales_sorted = sales_lf.sort("_sale_date", nulls_last=True)
 
     can_addr_match = (
-        "_addr_key" in sales_sorted.collect_schema().names()
-        and "_addr_key" in epc_cols_after_norm
+        "_addr_key" in sales_sorted.collect_schema().names() and "_addr_key" in epc_cols_after_norm
     )
 
     if can_addr_match:
@@ -228,9 +211,7 @@ def link_sales_to_epc(
         # we never use EPC data that didn't exist at the time of the transaction.
         # Sales with no matching (postcode, _addr_key) pair in EPC get null EPC columns.
         with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", category=UserWarning, message="Sortedness"
-            )
+            warnings.filterwarnings("ignore", category=UserWarning, message="Sortedness")
             result = sales_sorted.join_asof(
                 epc_key,
                 left_on="_sale_date",
@@ -239,20 +220,14 @@ def link_sales_to_epc(
                 strategy="backward",
                 suffix="_epc",
             )
-        logger.info(
-            "EPC Phase-1 plan built (join_asof: exact address + postcode, backward)"
-        )
+        logger.info("EPC Phase-1 plan built (join_asof: exact address + postcode, backward)")
     else:
         # Address key not available on one or both sides.
         # Skip the EPC join rather than attempt an imprecise postcode-only match.
         logger.warning(
             "Cannot match EPC by address (_addr_key missing from %s). "
             "Returning sales without EPC columns.",
-            (
-                "sales"
-                if "_addr_key" not in sales_sorted.collect_schema().names()
-                else "EPC"
-            ),
+            ("sales" if "_addr_key" not in sales_sorted.collect_schema().names() else "EPC"),
         )
         return sales_sorted.drop("_sale_date")
 
@@ -272,24 +247,18 @@ def link_sales_to_epc(
         _phase1_sink.parent.mkdir(parents=True, exist_ok=True)
         result.sink_parquet(_phase1_sink)
         result = pl.scan_parquet(_phase1_sink)
-        logger.info(
-            "Phase-1 intermediate written to %s; resuming Phase-2", _phase1_sink
-        )
+        logger.info("Phase-1 intermediate written to %s; resuming Phase-2", _phase1_sink)
 
     # --- Phase 2: attach full EPC features on lmk_key (1:1, no fan-out) ---
     if epc_id_col is not None:
         epc_feature_drop = [
-            c
-            for c in ["postcode", "_addr_key", "inspection_date"]
-            if c in epc_cols_after_norm
+            c for c in ["postcode", "_addr_key", "inspection_date"] if c in epc_cols_after_norm
         ]
         epc_features = epc_lf.drop(epc_feature_drop)
         result = result.join(epc_features, on=epc_id_col, how="left", suffix="_epc")
         logger.info("EPC Phase-2 plan built (1:1 feature join on %s)", epc_id_col)
     else:
-        logger.info(
-            "EPC join complete (all features from Phase-1; no lmk_key for Phase-2)"
-        )
+        logger.info("EPC join complete (all features from Phase-1; no lmk_key for Phase-2)")
 
     return result
 
@@ -310,9 +279,7 @@ def enrich_with_hpi(
     lf_cols = lf.collect_schema().names()
 
     # Find region column in HPI
-    hpi_region_col = next(
-        (c for c in ["regionname", "region_name"] if c in hpi_cols), None
-    )
+    hpi_region_col = next((c for c in ["regionname", "region_name"] if c in hpi_cols), None)
 
     if hpi_region_col is None or "district" not in lf_cols:
         logger.warning(
@@ -351,9 +318,7 @@ def enrich_with_hpi(
         ).drop("date")
 
     if "year" not in lf_cols or "month" not in lf_cols:
-        logger.warning(
-            "Cannot enrich with HPI: sales data missing 'year'/'month' columns."
-        )
+        logger.warning("Cannot enrich with HPI: sales data missing 'year'/'month' columns.")
         return lf
 
     # LR stores district in uppercase (e.g. "MANCHESTER"); HPI uses title case ("Manchester").
@@ -420,9 +385,7 @@ def save_dataset(
         return dest
 
     if partition_by and fmt != "parquet":
-        logger.warning(
-            "partition_by is only supported for parquet; ignoring for fmt=%s", fmt
-        )
+        logger.warning("partition_by is only supported for parquet; ignoring for fmt=%s", fmt)
 
     if isinstance(df, pl.LazyFrame):
         if fmt == "parquet":
