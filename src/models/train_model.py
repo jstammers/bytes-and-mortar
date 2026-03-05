@@ -126,7 +126,9 @@ def _build_objective(model_type: ModelType):
         raise ValueError(f"Unsupported model_type: {model_type}")
 
 
-def _build_best_pipeline(model_type: ModelType, best_params: dict, feature_config: FeatureConfig):
+def _build_best_pipeline(
+    model_type: ModelType, best_params: dict, feature_config: FeatureConfig
+):
     """Reconstruct the best pipeline with tuned hyperparameters."""
     if model_type == ModelType.linear:
         from src.models.linear import build_linear_pipeline
@@ -163,16 +165,22 @@ def _create_evaluation_plots(
     # 1. Predicted vs Actual (Model)
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.scatter(y_true, y_pred_model, alpha=0.5, s=20, label=model_name)
-    ax.scatter(y_true, y_pred_baseline, alpha=0.3, s=10, label="Baseline", color="orange")
+    ax.scatter(
+        y_true, y_pred_baseline, alpha=0.3, s=10, label="Baseline", color="orange"
+    )
 
     # Perfect prediction line
     min_val = min(y_true.min(), y_pred_model.min(), y_pred_baseline.min())
     max_val = max(y_true.max(), y_pred_model.max(), y_pred_baseline.max())
-    ax.plot([min_val, max_val], [min_val, max_val], "r--", lw=2, label="Perfect Prediction")
+    ax.plot(
+        [min_val, max_val], [min_val, max_val], "r--", lw=2, label="Perfect Prediction"
+    )
 
     ax.set_xlabel("True Price (£)", fontsize=12)
     ax.set_ylabel("Predicted Price (£)", fontsize=12)
-    ax.set_title(f"Predicted vs Actual Price - {model_name}", fontsize=14, fontweight="bold")
+    ax.set_title(
+        f"Predicted vs Actual Price - {model_name}", fontsize=14, fontweight="bold"
+    )
     ax.legend()
     ax.ticklabel_format(style="plain", axis="both")
     plt.tight_layout()
@@ -199,8 +207,12 @@ def _create_evaluation_plots(
     abs_errors_model = np.abs(residuals)
     abs_errors_baseline = np.abs(y_true - y_pred_baseline)
 
-    axes[0].hist(abs_errors_model, bins=50, alpha=0.7, label=model_name, edgecolor="black")
-    axes[0].hist(abs_errors_baseline, bins=50, alpha=0.5, label="Baseline", edgecolor="black")
+    axes[0].hist(
+        abs_errors_model, bins=50, alpha=0.7, label=model_name, edgecolor="black"
+    )
+    axes[0].hist(
+        abs_errors_baseline, bins=50, alpha=0.5, label="Baseline", edgecolor="black"
+    )
     axes[0].set_xlabel("Absolute Error (£)", fontsize=12)
     axes[0].set_ylabel("Frequency", fontsize=12)
     axes[0].set_title("Absolute Error Distribution", fontsize=13, fontweight="bold")
@@ -211,8 +223,12 @@ def _create_evaluation_plots(
     pct_errors_model = 100 * residuals / y_true
     pct_errors_baseline = 100 * (y_true - y_pred_baseline) / y_true
 
-    axes[1].hist(pct_errors_model, bins=50, alpha=0.7, label=model_name, edgecolor="black")
-    axes[1].hist(pct_errors_baseline, bins=50, alpha=0.5, label="Baseline", edgecolor="black")
+    axes[1].hist(
+        pct_errors_model, bins=50, alpha=0.7, label=model_name, edgecolor="black"
+    )
+    axes[1].hist(
+        pct_errors_baseline, bins=50, alpha=0.5, label="Baseline", edgecolor="black"
+    )
     axes[1].set_xlabel("Percentage Error (%)", fontsize=12)
     axes[1].set_ylabel("Frequency", fontsize=12)
     axes[1].set_title("Percentage Error Distribution", fontsize=13, fontweight="bold")
@@ -329,7 +345,9 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
         # ---- Baseline (operates on raw data, not log-transformed) ----
         baseline = MedianByGroupBaseline()
         # Convert to pandas for baseline which expects pandas DataFrames
-        baseline.fit(train_df.select(feature_cols).to_pandas(), train_df[target_col].to_pandas())
+        baseline.fit(
+            train_df.select(feature_cols).to_pandas(), train_df[target_col].to_pandas()
+        )
         # Baseline predicts in price space, so wrap in log1p for consistent comparison
         baseline_pred_raw = baseline.predict(X_test)
         baseline_pred_log = np.log1p(np.clip(baseline_pred_raw, 0, None))
@@ -358,7 +376,9 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
         objective = _build_objective(experiment.model_type)
 
         # Log each Optuna trial as a nested MLflow child run
-        def _mlflow_callback(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
+        def _mlflow_callback(
+            study: optuna.Study, trial: optuna.trial.FrozenTrial
+        ) -> None:
             with mlflow.start_run(run_name=f"trial_{trial.number}", nested=True):
                 mlflow.log_params(trial.params)
                 if trial.value is not None:
@@ -415,7 +435,9 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
         baseline_test_metrics = test_metrics_dict["baseline"]
 
         # Log baseline metrics for comparison
-        mlflow.log_metrics({f"baseline_{k}": v for k, v in baseline_test_metrics.to_dict().items()})
+        mlflow.log_metrics(
+            {f"baseline_{k}": v for k, v in baseline_test_metrics.to_dict().items()}
+        )
 
         # ---- Create and log evaluation plots ----
         y_true_price = np.expm1(y_test_log)
@@ -504,7 +526,9 @@ def train_command(
     ] = None,
     test_years: Annotated[
         str,
-        typer.Option(help="Comma-separated years to hold out as test set (e.g. '2023,2024')."),
+        typer.Option(
+            help="Comma-separated years to hold out as test set (e.g. '2023,2024')."
+        ),
     ] = "2024",
     cv_strategy: Annotated[
         CVStrategy,
@@ -516,11 +540,15 @@ def train_command(
     ] = 5,
     cv_gap_months: Annotated[
         int,
-        typer.Option("--cv-gap-months", help="Gap in months between train end and val start."),
+        typer.Option(
+            "--cv-gap-months", help="Gap in months between train end and val start."
+        ),
     ] = 1,
     cv_window_months: Annotated[
         int | None,
-        typer.Option("--cv-window-months", help="Training window (months) for sliding strategy."),
+        typer.Option(
+            "--cv-window-months", help="Training window (months) for sliding strategy."
+        ),
     ] = 24,
     n_trials: Annotated[
         int,
@@ -532,7 +560,9 @@ def train_command(
     ] = None,
     missing_strategy: Annotated[
         MissingStrategy,
-        typer.Option("--missing-strategy", help="How to handle missing feature values."),
+        typer.Option(
+            "--missing-strategy", help="How to handle missing feature values."
+        ),
     ] = MissingStrategy.impute,
     log_transform_target: Annotated[
         bool,
@@ -543,7 +573,9 @@ def train_command(
     ] = True,
     register: Annotated[
         bool,
-        typer.Option("--register/--no-register", help="Register best model in MLflow registry."),
+        typer.Option(
+            "--register/--no-register", help="Register best model in MLflow registry."
+        ),
     ] = False,
     mlflow_uri: Annotated[
         str | None,
@@ -554,7 +586,9 @@ def train_command(
     ] = None,
     numeric_features: Annotated[
         str | None,
-        typer.Option(help="Comma-separated list of numeric feature columns to override defaults."),
+        typer.Option(
+            help="Comma-separated list of numeric feature columns to override defaults."
+        ),
     ] = None,
     categorical_features: Annotated[
         str | None,
@@ -577,7 +611,9 @@ def train_command(
     if numeric_features:
         feat_config.numeric_features = [c.strip() for c in numeric_features.split(",")]
     if categorical_features:
-        feat_config.categorical_features = [c.strip() for c in categorical_features.split(",")]
+        feat_config.categorical_features = [
+            c.strip() for c in categorical_features.split(",")
+        ]
 
     experiment = Experiment(
         model_type=model_type,
