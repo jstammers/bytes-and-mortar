@@ -3,8 +3,7 @@
 
 # Install all dependencies (including dev)
 install:
-    uv sync --extra dev
-
+    uv sync --all-extras
 # Run the test suite
 test *args='':
     uv run pytest tests/ {{ args }}

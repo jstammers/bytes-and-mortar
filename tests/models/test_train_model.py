@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import pytest
 
 from src.features.build_features import FeatureConfig, MissingStrategy
@@ -25,13 +25,18 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def synthetic_df(tmp_path: Path) -> tuple[Path, pd.DataFrame]:
+def synthetic_df(tmp_path: Path) -> tuple[Path, pl.DataFrame]:
     """500-row synthetic property dataset saved as parquet."""
     rng = np.random.default_rng(42)
     n = 500
-    dates = pd.date_range("2020-01-01", periods=n, freq="3D")
+    dates = pl.date_range(
+        start=pl.date(2020, 1, 1),
+        end=pl.date(2020, 1, 1) + pl.duration(days=n * 3 - 1),
+        interval="3d",
+        eager=True,
+    )
 
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             "date_of_transfer": dates,
             "price": rng.integers(150_000, 800_000, n).astype(float),
@@ -43,8 +48,8 @@ def synthetic_df(tmp_path: Path) -> tuple[Path, pd.DataFrame]:
             "current_energy_rating": rng.choice(["A", "B", "C", "D", "E"], n),
             "construction_age_band": rng.choice(["pre-1900", "1950s", "2000s"], n),
             "district": rng.choice(["Westminster", "Lambeth", "Islington"], n),
-            "year": dates.year,
-            "month": dates.month,
+            "year": dates.dt.year(),
+            "month": dates.dt.month(),
             "current_energy_efficiency": rng.integers(20, 100, n).astype(float),
             "total_floor_area": rng.uniform(30, 250, n),
             "number_habitable_rooms": rng.integers(1, 7, n).astype(float),
@@ -54,7 +59,7 @@ def synthetic_df(tmp_path: Path) -> tuple[Path, pd.DataFrame]:
     )
 
     parquet_path = tmp_path / "uk_property_sales.parquet"
-    df.to_parquet(parquet_path, index=False)
+    df.write_parquet(parquet_path)
     return parquet_path, df
 
 
@@ -65,7 +70,12 @@ def base_experiment(synthetic_df, tmp_path: Path) -> Experiment:
     return Experiment(
         model_type=ModelType.xgboost,
         feature_config=FeatureConfig(
-            numeric_features=["year", "month", "total_floor_area", "current_energy_efficiency"],
+            numeric_features=[
+                "year",
+                "month",
+                "total_floor_area",
+                "current_energy_efficiency",
+            ],
             categorical_features=["property_type", "old_new"],
             target_encode_features=["district"],
             missing_strategy=MissingStrategy.impute,
@@ -221,7 +231,10 @@ class TestTrain:
                 missing_strategy=strategy,
             ),
             cv_config=CVConfig(
-                strategy=CVStrategy.sliding_window, n_splits=2, gap_months=0, window_months=8
+                strategy=CVStrategy.sliding_window,
+                n_splits=2,
+                gap_months=0,
+                window_months=8,
             ),
             hpo_config=HPOConfig(n_trials=2),
             data_path=parquet_path,
