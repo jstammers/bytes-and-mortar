@@ -89,3 +89,8 @@ markers = [
 # ty is in alpha and lacks stubs for mlflow, xgboost, and other third-party libs.
 # These are false positives — suppress until upstream stubs improve.
 possibly-missing-attribute = "ignore"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+]

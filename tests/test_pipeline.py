@@ -6,6 +6,7 @@ import polars as pl
 import pytest
 
 from src.data.pipeline import (
+    _expand_abbreviations,  # private but stable enough to test directly
     enrich_with_hpi,
     link_sales_to_epc,
     normalise_address,
@@ -131,11 +132,11 @@ class TestLinkSalesToEPC:
         assert t001["current_energy_rating"][0] == "C"
 
     def test_selects_temporally_closest_epc(self, sales_df, epc_df):
-        """When multiple certificates exist, pick the one closest to the sale date."""
+        """When multiple pre-sale certificates exist, pick the most recent one."""
         result = link_sales_to_epc(sales_df, epc_df).collect()
         t001 = result.filter(pl.col("transaction_id") == "T001")
         assert len(t001) == 1
-        # The 2023-06-15 certificate is closer to the 2024-01-15 sale than 2019-01-10.
+        # 2023-06-15 is the most recent cert before the 2024-01-15 sale (2019-01-10 is older).
         assert t001["inspection_date"][0] == date(2023, 6, 15)
 
     def test_address_match_preferred_over_postcode_only(self, sales_df):
@@ -279,3 +280,189 @@ class TestRunPipeline:
             fmt="parquet",
         )
         assert len(result) == len(sales_df)
+
+
+class TestExpandAbbreviations:
+    """Unit tests for the _expand_abbreviations address normalisation helper."""
+
+    def _apply(self, text: str) -> str:
+        """Helper: apply _expand_abbreviations to a plain string via a single-row DataFrame."""
+        df = pl.DataFrame({"addr": [text]})
+        return df.select(_expand_abbreviations(pl.col("addr")).alias("out"))["out"][0]
+
+    def test_expands_rd_to_road(self):
+        assert self._apply("10 VICTORIA RD") == "10 VICTORIA ROAD"
+
+    def test_expands_ave_to_avenue(self):
+        assert self._apply("5 PARK AVE") == "5 PARK AVENUE"
+
+    def test_expands_av_to_avenue(self):
+        assert self._apply("5 PARK AV") == "5 PARK AVENUE"
+
+    def test_expands_cres_to_crescent(self):
+        assert self._apply("3 MAPLE CRES") == "3 MAPLE CRESCENT"
+
+    def test_expands_cl_to_close(self):
+        assert self._apply("7 OAK CL") == "7 OAK CLOSE"
+
+    def test_expands_gdns_to_gardens(self):
+        assert self._apply("12 ROSE GDNS") == "12 ROSE GARDENS"
+
+    def test_number_letter_hyphen_normalised(self):
+        """'1-A' should become '1A'."""
+        assert self._apply("1-A HIGH STREET") == "1A HIGH STREET"
+
+    def test_number_letter_space_normalised(self):
+        """'1 A' (digit space letter) should become '1A'."""
+        assert self._apply("1 A HIGH STREET") == "1A HIGH STREET"
+
+    def test_does_not_expand_st(self):
+        """ST is intentionally not expanded (Saint vs Street ambiguity)."""
+        result = self._apply("ST JAMES ST")
+        # Should be unchanged — ST handled by fuzzy matching instead
+        assert result == "ST JAMES ST"
+
+    def test_no_change_when_no_abbrevs(self):
+        assert self._apply("10 DOWNING STREET") == "10 DOWNING STREET"
+
+
+class TestBackwardOnlyMatching:
+    """EPC certs issued after the sale date must never be linked (data leakage guard)."""
+
+    def test_future_cert_not_matched(self, sales_df):
+        """A certificate inspected after the sale date should produce no EPC match."""
+        epc = pl.DataFrame(
+            {
+                "postcode": ["SW1A 1AA"],
+                "address1": ["10 DOWNING STREET"],
+                # Inspection date is 18 months AFTER the 2024-01-15 sale
+                "inspection_date": [date(2025, 7, 1)],
+                "current_energy_rating": ["A"],
+            }
+        )
+        result = link_sales_to_epc(sales_df, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        assert len(t001) == 1
+        assert t001["current_energy_rating"][0] is None, (
+            "Future-dated EPC must not be linked to an earlier sale"
+        )
+
+    def test_cert_on_sale_date_is_matched(self, sales_df):
+        """A certificate with inspection_date == sale_date is valid (boundary condition)."""
+        epc = pl.DataFrame(
+            {
+                "postcode": ["SW1A 1AA"],
+                "address1": ["10 DOWNING STREET"],
+                "inspection_date": [date(2024, 1, 15)],  # same day as T001 sale
+                "current_energy_rating": ["B"],
+            }
+        )
+        result = link_sales_to_epc(sales_df, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        assert t001["current_energy_rating"][0] == "B"
+
+    def test_most_recent_pre_sale_cert_selected(self, sales_df):
+        """With one pre-sale and one post-sale cert, only the pre-sale one is considered."""
+        epc = pl.DataFrame(
+            {
+                "postcode": ["SW1A 1AA", "SW1A 1AA"],
+                "address1": ["10 DOWNING STREET", "10 DOWNING STREET"],
+                "inspection_date": [date(2022, 3, 1), date(2025, 1, 1)],
+                "current_energy_rating": ["C", "A"],  # "C" is pre-sale, "A" is post-sale
+            }
+        )
+        result = link_sales_to_epc(sales_df, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        # "A" is from the future; "C" is the only valid match
+        assert t001["current_energy_rating"][0] == "C"
+
+    def test_no_cert_at_all_leaves_null(self, sales_df):
+        """If there are no EPC records at the postcode, EPC columns remain null."""
+        epc = pl.DataFrame(
+            {
+                "postcode": ["W1A 1AB"],  # Different postcode — no match
+                "address1": ["1 OXFORD STREET"],
+                "inspection_date": [date(2022, 1, 1)],
+                "current_energy_rating": ["D"],
+            }
+        )
+        result = link_sales_to_epc(sales_df, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        assert t001["current_energy_rating"][0] is None
+
+
+class TestAddressMatchingBehaviour:
+    """Behaviour tests for the exact-address matching contract.
+
+    Fuzzy matching is not yet implemented.  These tests document both what
+    the pipeline DOES match (after abbreviation expansion) and what it
+    deliberately leaves unmatched until a fuzzy fallback is added.
+    """
+
+    def test_abbreviation_expansion_enables_exact_match(self):
+        """RD → ROAD expansion on both sides should allow a Phase-1 exact match."""
+        # Sales: paon="10", street="DOWNING ROAD" → _addr_key = "10 DOWNING ROAD"
+        # EPC:  address1="10 DOWNING RD"          → after expansion: "10 DOWNING ROAD"
+        # Both resolve to the same key → exact match fires.
+        sales_rd = pl.DataFrame(
+            {
+                "transaction_id": ["T001"],
+                "price": [250000],
+                "date_of_transfer": [date(2024, 1, 15)],
+                "postcode": ["SW1A 1AA"],
+                "property_type": ["D"],
+                "paon": ["10"],
+                "street": ["DOWNING ROAD"],
+                "district": ["Westminster"],
+                "year": [2024],
+                "month": [1],
+            }
+        )
+        epc = pl.DataFrame(
+            {
+                "postcode": ["SW1A 1AA"],
+                "address1": ["10 DOWNING RD"],
+                "lmk_key": ["LMK002"],
+                "current_energy_rating": ["C"],
+                "inspection_date": [date(2023, 3, 1)],
+            }
+        )
+        result = link_sales_to_epc(sales_rd, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        assert t001["current_energy_rating"][0] == "C"
+
+    def test_st_vs_street_does_not_match(self, sales_df):
+        """ST is not in the expansion list (Saint/Street ambiguity).
+
+        'DOWNING ST' and 'DOWNING STREET' produce different _addr_keys after
+        normalisation, so no match is made.  A fuzzy fallback (planned) will
+        eventually handle this case.
+        """
+        epc = pl.DataFrame(
+            {
+                "postcode": ["SW1A 1AA"],
+                "address1": ["10 DOWNING ST"],
+                "lmk_key": ["LMK001"],
+                "current_energy_rating": ["B"],
+                "inspection_date": [date(2023, 6, 1)],
+            }
+        )
+        result = link_sales_to_epc(sales_df, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        # "10 DOWNING STREET" ≠ "10 DOWNING ST" after normalisation → no match
+        assert t001["current_energy_rating"][0] is None
+
+    def test_different_address_gives_null_epc(self, sales_df):
+        """A sale with no matching address in its postcode retains null EPC columns."""
+        epc = pl.DataFrame(
+            {
+                "postcode": ["SW1A 1AA"],
+                "address1": ["11 DOWNING STREET"],  # different PAON
+                "lmk_key": ["LMK001"],
+                "current_energy_rating": ["D"],
+                "inspection_date": [date(2023, 1, 1)],
+            }
+        )
+        result = link_sales_to_epc(sales_df, epc).collect()
+        t001 = result.filter(pl.col("transaction_id") == "T001")
+        assert t001["current_energy_rating"][0] is None
