@@ -91,9 +91,11 @@ dev-frontend:
 # Build frontend for production
 build-frontend:
     cd frontend && npm run build
-# Create M19 postcode fixtures for integration tests (requires data/raw/ files)
-create-fixtures src_dir='':
-    PYTHONPATH=. uv run python scripts/create_m19_fixtures.py {{ if src_dir != '' { "--src-dir " + src_dir } else { "" } }}
+# Create postcode-filtered fixtures for integration tests (requires data/raw/ files)
+# Usage: just create-fixtures SW1
+#        just create-fixtures W1 /path/to/raw
+create-fixtures postcode_prefix src_dir='':
+    PYTHONPATH=. uv run python scripts/create_fixtures.py --postcode-prefix {{ postcode_prefix }} {{ if src_dir != '' { "--src-dir " + src_dir } else { "" } }}
 
 # Run integration tests only (requires fixtures — run create-fixtures first)
 test-integration *args='':

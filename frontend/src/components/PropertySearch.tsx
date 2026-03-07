@@ -117,7 +117,7 @@ export default function PropertySearch({ onResults }: PropertySearchProps) {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
           onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-          placeholder="Search by postcode (e.g. M19 2EU) or street..."
+          placeholder="Search by postcode or street..."
           className="flex-1 px-4 py-3 border border-gray-300 rounded-l-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           aria-autocomplete="list"
           aria-expanded={showSuggestions}

@@ -29,7 +29,7 @@ export default function Home() {
         <div className="text-center text-gray-400 mt-16">
           <div className="text-5xl mb-4">🏠</div>
           <p className="text-sm">Enter a postcode or address above to find properties.</p>
-          <p className="text-xs mt-2 text-gray-300">Try: M19 2EU, Church Lane, Manchester</p>
+          <p className="text-xs mt-2 text-gray-300">Try: SW1A 1AA or Church Lane, Westminster</p>
         </div>
       )}
 
