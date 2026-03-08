@@ -25,12 +25,15 @@ function propertyTypeIcon(code: string): string {
 }
 
 function formatPrice(price: number): string {
+  if (!price) return 'Price unavailable'
   return '£' + price.toLocaleString('en-GB')
 }
 
 function formatDate(dateStr: string): string {
+  if (!dateStr) return 'Unknown date'
   const d = new Date(dateStr)
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  if (isNaN(d.getTime())) return 'Unknown date'
+  return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
 }
 
 export default function PropertyCard({ property }: Props) {
@@ -48,11 +51,16 @@ export default function PropertyCard({ property }: Props) {
         </span>
       </div>
 
-      <p className="text-xs text-gray-500 mb-3">
+      <p className="text-xs text-gray-500 mb-2">
         {property.postcode} &middot; {property.district}
       </p>
 
-      <p className="text-xs text-gray-600 mb-3">{property.property_type}</p>
+      <p className="text-xs text-gray-600 mb-3">
+        {property.property_type}
+        {property.tenure && (
+          <span className="text-gray-400"> &middot; {property.tenure}</span>
+        )}
+      </p>
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         {property.energy_rating && (
@@ -65,6 +73,9 @@ export default function PropertyCard({ property }: Props) {
         )}
         {property.bedrooms && (
           <span className="text-xs text-gray-500">{property.bedrooms} bed</span>
+        )}
+        {!property.energy_rating && !property.floor_area && !property.bedrooms && (
+          <span className="text-xs text-gray-400 italic">No EPC data</span>
         )}
       </div>
 

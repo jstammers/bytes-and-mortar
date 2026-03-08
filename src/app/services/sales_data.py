@@ -325,8 +325,6 @@ class SalesDataService(PropertyDataService):
             area_diff = abs(area - floor_area) / floor_area
             type_bonus = 0.2 if p["property_type_code"] == prop_type_code else 0.0
             p["similarity_score"] = round(max(0.0, 1.0 - area_diff) * 0.8 + type_bonus, 3)
-            p.setdefault("bedrooms", p["bedrooms"] or 0)
-            p.setdefault("energy_rating", p["energy_rating"] or "D")
 
             self._cache[p["id"]] = p
             results.append(p)

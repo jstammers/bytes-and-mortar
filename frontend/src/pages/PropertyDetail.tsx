@@ -29,7 +29,15 @@ function energyRatingColor(rating: string | null): string {
 }
 
 function formatPrice(price: number): string {
+  if (!price) return 'Price unavailable'
   return '£' + price.toLocaleString('en-GB')
+}
+
+function formatDate(dateStr: string): string {
+  if (!dateStr) return 'Unknown date'
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return 'Unknown date'
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 export default function PropertyDetail() {
@@ -116,14 +124,17 @@ export default function PropertyDetail() {
           )}
         </div>
         <p className="text-gray-500 text-sm mb-1">
-          {property.postcode} &middot; {property.district}
+          {property.postcode} &middot; {property.district} &middot; {property.tenure}
         </p>
-        {history && history.transactions.length > 0 && (
-          <p className="text-xl font-bold text-gray-800 mt-2">
-            {formatPrice(history.transactions[history.transactions.length - 1].price)}
-            <span className="text-sm font-normal text-gray-400 ml-2">last sale</span>
-          </p>
-        )}
+        <p className="text-xl font-bold text-gray-800 mt-2">
+          {formatPrice(property.last_sale_price)}
+          <span className="text-sm font-normal text-gray-400 ml-2">last sale</span>
+          {property.last_sale_date && (
+            <span className="text-sm font-normal text-gray-400 ml-1">
+              &middot; {formatDate(property.last_sale_date)}
+            </span>
+          )}
+        </p>
       </div>
 
       {/* Main content + sidebar */}
@@ -167,7 +178,7 @@ export default function PropertyDetail() {
                         <tbody>
                           {[...history.transactions].reverse().map((tx) => (
                             <tr key={tx.transaction_id} className="border-b border-gray-50">
-                              <td className="py-2">{new Date(tx.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                              <td className="py-2">{formatDate(tx.date)}</td>
                               <td className="py-2 text-right font-semibold">{formatPrice(tx.price)}</td>
                             </tr>
                           ))}
@@ -212,8 +223,13 @@ export default function PropertyDetail() {
                           <p className="text-xs font-semibold text-gray-800">{s.address}</p>
                           <p className="text-xs text-gray-400">{s.postcode}</p>
                           <div className="flex justify-between mt-1">
-                            <span className="text-xs text-gray-500">{s.floor_area} sqm &middot; {s.bedrooms} bed</span>
-                            <span className="text-xs font-semibold text-gray-800">{formatPrice(s.last_sale_price)}</span>
+                            <span className="text-xs text-gray-500">
+                              {s.floor_area != null ? `${s.floor_area} sqm` : 'Area unknown'}
+                              {s.bedrooms != null ? ` · ${s.bedrooms} bed` : ''}
+                            </span>
+                            <span className="text-xs font-semibold text-gray-800">
+                              {formatPrice(s.last_sale_price)}
+                            </span>
                           </div>
                         </div>
                       ))}

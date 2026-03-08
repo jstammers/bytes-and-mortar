@@ -5,6 +5,7 @@ export interface PropertySearchResult {
   district: string
   property_type: string
   property_type_code: string
+  tenure: string
   last_sale_price: number
   last_sale_date: string
   energy_rating: string | null
@@ -20,6 +21,8 @@ export interface PropertyDetail {
   property_type: string
   property_type_code: string
   tenure: string
+  last_sale_price: number
+  last_sale_date: string
   energy_rating: string | null
   current_energy_efficiency: number | null
   potential_energy_efficiency: number | null
@@ -56,9 +59,9 @@ export interface SimilarProperty {
   address: string
   postcode: string
   property_type: string
-  floor_area: number
-  bedrooms: number
-  energy_rating: string
+  floor_area: number | null
+  bedrooms: number | null
+  energy_rating: string | null
   last_sale_price: number
   last_sale_date: string
   similarity_score: number

@@ -32,7 +32,7 @@ function energyRatingColor(rating: string): string {
 
 interface TooltipProps {
   active?: boolean
-  payload?: Array<{ payload: SimilarProperty & { floor_area: number; last_sale_price: number } }>
+  payload?: Array<{ payload: { address: string; last_sale_price: number; floor_area: number; energy_rating: string } }>
 }
 
 function CustomTooltip({ active, payload }: TooltipProps) {
@@ -49,19 +49,34 @@ function CustomTooltip({ active, payload }: TooltipProps) {
 }
 
 export default function SimilarPropertiesChart({ similar, currentProperty }: Props) {
-  // Group similar properties by energy rating for coloring
-  const ratingGroups: Record<string, SimilarProperty[]> = {}
-  for (const s of similar) {
-    const r = s.energy_rating || 'D'
+  // Only include similar properties that have floor_area and last_sale_price for the chart
+  const plottable = similar.filter(
+    (s): s is SimilarProperty & { floor_area: number } => s.floor_area != null && s.last_sale_price > 0
+  )
+
+  // Group by energy rating for colour coding; fall back to 'Unknown' when null
+  const ratingGroups: Record<string, typeof plottable> = {}
+  for (const s of plottable) {
+    const r = s.energy_rating ?? 'Unknown'
     if (!ratingGroups[r]) ratingGroups[r] = []
     ratingGroups[r].push(s)
   }
 
-  const currentPoint = {
-    floor_area: currentProperty.floor_area ?? 0,
-    last_sale_price: currentProperty.last_sale_price ?? 0,
-    address: currentProperty.address,
-    energy_rating: currentProperty.energy_rating ?? 'D',
+  const currentPoint = currentProperty.floor_area != null && currentProperty.last_sale_price > 0
+    ? {
+        floor_area: currentProperty.floor_area,
+        last_sale_price: currentProperty.last_sale_price,
+        address: currentProperty.address,
+        energy_rating: currentProperty.energy_rating ?? 'Unknown',
+      }
+    : null
+
+  if (plottable.length === 0 && !currentPoint) {
+    return (
+      <p className="text-xs text-gray-400 italic py-4 text-center">
+        Floor area data unavailable — chart cannot be shown.
+      </p>
+    )
   }
 
   return (
@@ -94,18 +109,20 @@ export default function SimilarPropertiesChart({ similar, currentProperty }: Pro
           {Object.entries(ratingGroups).sort().map(([rating, props]) => (
             <Scatter
               key={rating}
-              name={`EPC ${rating}`}
+              name={rating === 'Unknown' ? 'No EPC' : `EPC ${rating}`}
               data={props}
-              fill={energyRatingColor(rating)}
+              fill={rating === 'Unknown' ? '#9ca3af' : energyRatingColor(rating)}
               opacity={0.75}
             />
           ))}
-          <Scatter
-            name="This Property"
-            data={[currentPoint]}
-            fill="#2563eb"
-            shape="star"
-          />
+          {currentPoint && (
+            <Scatter
+              name="This Property"
+              data={[currentPoint]}
+              fill="#2563eb"
+              shape="star"
+            />
+          )}
         </ScatterChart>
       </ResponsiveContainer>
     </div>
