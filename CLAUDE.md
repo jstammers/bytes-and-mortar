@@ -53,7 +53,6 @@ src/
     config.py           # Experiment, PerpetualConfig, ModelType dataclasses
     perpetual_model.py  # Perpetual GBM pipeline (primary model)
     linear.py           # RidgeCV pipeline
-    xgboost_model.py    # XGBoost pipeline (deprecated)
     cv.py               # Time-series CV utilities
     evaluate.py         # RegressionMetrics, compute_metrics
     registry.py         # MLflow tracking and model registry helpers

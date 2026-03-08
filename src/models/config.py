@@ -28,10 +28,7 @@ from src.features.build_features import FeatureConfig
 class CVStrategy(StrEnum):
     """Time-series cross-validation fold strategy.
 
-    .. deprecated::
-        CV is no longer needed in the default Perpetual training path.
-        Retained for backward compatibility and direct use of
-        :func:`src.models.cv.make_cv_splits`.
+    Used by :func:`src.models.cv.make_cv_splits` for evaluation utilities.
     """
 
     sliding_window = "sliding_window"
@@ -48,7 +45,6 @@ class ModelType(StrEnum):
 
     perpetual = "perpetual"
     linear = "linear"
-    xgboost = "xgboost"  # deprecated — use perpetual
 
 
 @dataclass
@@ -81,11 +77,7 @@ class PerpetualConfig:
 
 @dataclass
 class CVConfig:
-    """Cross-validation configuration.
-
-    .. deprecated::
-        CV is no longer used by the Perpetual or Ridge training paths.
-        Retained for backward compatibility.
+    """Cross-validation configuration for :func:`src.models.cv.make_cv_splits`.
 
     Attributes:
         strategy: Split strategy (sliding, expanding, or year-based).
@@ -103,27 +95,6 @@ class CVConfig:
 
 
 @dataclass
-class HPOConfig:
-    """Optuna hyperparameter optimisation configuration.
-
-    .. deprecated::
-        HPO is no longer part of the default training pipeline.
-        Use :class:`PerpetualConfig` with a ``budget`` value instead.
-
-    Attributes:
-        n_trials: Number of Optuna trials to run.
-        timeout_seconds: Hard time limit across all trials.
-        metric: CV metric minimised by Optuna.
-        sampler: Optuna sampler name.
-    """
-
-    n_trials: int = 50
-    timeout_seconds: int | None = None
-    metric: str = "rmse"
-    sampler: str = "tpe"
-
-
-@dataclass
 class Experiment:
     """Full configuration for a single training run.
 
@@ -136,8 +107,6 @@ class Experiment:
             ``ModelType.perpetual`` — a self-tuning GBM requiring no HPO.
         feature_config: Feature engineering options.
         perpetual_config: Perpetual GBM settings. Ignored for other model types.
-        cv_config: Deprecated. Ignored by the Perpetual training path.
-        hpo_config: Deprecated. Ignored by the Perpetual training path.
         data_path: Path to the processed parquet file.
         nrows: Limit rows loaded. ``None`` loads everything.
         test_years: Calendar years held out as the final test set.
@@ -152,10 +121,6 @@ class Experiment:
     model_type: ModelType = ModelType.perpetual
     feature_config: FeatureConfig = field(default_factory=FeatureConfig)
     perpetual_config: PerpetualConfig = field(default_factory=PerpetualConfig)
-
-    # Deprecated: retained for backward compatibility
-    cv_config: CVConfig = field(default_factory=CVConfig)
-    hpo_config: HPOConfig = field(default_factory=HPOConfig)
 
     # Data
     data_path: Path = field(default_factory=lambda: PROCESSED_DATA_PATH)

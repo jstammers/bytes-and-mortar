@@ -29,9 +29,6 @@ just install-ml
 
 # All of the above + Bayesian notebook (PyMC, marimo)
 just install-notebooks
-
-# Legacy: XGBoost + Optuna (deprecated — use perpetual instead)
-just install-legacy
 ```
 
 ### Configuration
@@ -72,8 +69,8 @@ uv run bytes-and-mortar run --year 2024 --skip-epc
 just train
 
 # Tune budget for faster training or higher accuracy
-uv run bytes-and-mortar train run --budget 0.5   # faster
-uv run bytes-and-mortar train run --budget 1.0   # default — matches XGBoost+Optuna accuracy
+uv run bytes-and-mortar train run --budget 0.5   # faster, slightly lower accuracy
+uv run bytes-and-mortar train run --budget 1.0   # default — best accuracy
 
 # Linear regression (RidgeCV — alpha auto-selected, no HPO needed)
 uv run bytes-and-mortar train run --model-type linear
@@ -134,7 +131,6 @@ bytes-and-mortar/
 │       ├── evaluate.py             # RegressionMetrics, compute_metrics
 │       ├── perpetual_model.py      # Perpetual GBM pipeline (primary model)
 │       ├── linear.py               # RidgeCV pipeline
-│       ├── xgboost_model.py        # XGBoost pipeline (deprecated)
 │       ├── registry.py             # MLflow tracking and model registry helpers
 │       └── train_model.py          # train() orchestrator + Typer CLI subcommands
 ├── notebooks/

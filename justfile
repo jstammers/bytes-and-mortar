@@ -61,10 +61,6 @@ run *args='':
 install-ml:
     uv sync --extra dev --extra ml
 
-# Install legacy HPO dependencies (xgboost, optuna) — deprecated
-install-legacy:
-    uv sync --extra dev --extra ml --extra legacy
-
 # Install notebook dependencies (marimo, pymc)
 install-notebooks:
     uv sync --extra dev --extra ml --extra notebooks

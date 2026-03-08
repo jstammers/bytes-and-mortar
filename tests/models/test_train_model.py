@@ -198,26 +198,3 @@ class TestTrain:
         pipeline, _ = train(experiment)
         assert isinstance(pipeline, Pipeline)
 
-    def test_xgboost_emits_deprecation_warning(self, base_experiment, tmp_path):
-        """Using ModelType.xgboost should emit a DeprecationWarning."""
-        pytest.importorskip("xgboost", reason="xgboost not installed")
-        pytest.importorskip("optuna", reason="optuna not installed")
-
-        from src.models.train_model import train
-
-        experiment = Experiment(
-            model_type=ModelType.xgboost,
-            feature_config=FeatureConfig(
-                numeric_features=["year", "month", "total_floor_area"],
-                categorical_features=["property_type"],
-                target_encode_features=["district"],
-                missing_strategy=MissingStrategy.impute,
-            ),
-            data_path=base_experiment.data_path,
-            test_years=[2023],
-            register_model=False,
-            mlflow_tracking_uri=f"file://{tmp_path / 'mlruns_xgb'}",
-            models_dir=tmp_path / "models_xgb",
-        )
-        with pytest.warns(DeprecationWarning, match="xgboost"):
-            train(experiment)

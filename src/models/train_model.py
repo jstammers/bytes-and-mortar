@@ -19,7 +19,6 @@ The Typer sub-application ``train_app`` is attached to the main CLI via
 from __future__ import annotations
 
 import logging
-import warnings
 from pathlib import Path
 from typing import Annotated
 
@@ -113,16 +112,6 @@ def _build_pipeline(experiment: Experiment):
         from src.models.linear import build_linear_pipeline
 
         return build_linear_pipeline(feature_config=experiment.feature_config)
-    elif experiment.model_type == ModelType.xgboost:
-        warnings.warn(
-            "ModelType.xgboost is deprecated. Use ModelType.perpetual instead — "
-            "it matches accuracy at ~12× faster training speed with no HPO.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        from src.models.xgboost_model import build_xgboost_pipeline  # type: ignore[import]  # noqa: F401
-
-        return build_xgboost_pipeline(feature_config=experiment.feature_config)
     else:
         raise ValueError(f"Unsupported model_type: {experiment.model_type}")
 
@@ -215,8 +204,6 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
     For ``ModelType.linear``: fits RidgeCV which self-selects alpha — no
     external HPO required.
 
-    For ``ModelType.xgboost`` (deprecated): runs the legacy Optuna HPO loop.
-
     Args:
         experiment: Fully configured ``Experiment`` object.
 
@@ -265,38 +252,32 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
         baseline_pred_log = np.log1p(np.clip(baseline_pred_raw, 0, None))
 
         # ---- Fit model ----
-        if experiment.model_type == ModelType.xgboost:
-            pipeline, test_metrics = _train_xgboost_legacy(
-                experiment, train_df_pd, X_train, y_train_log, X_test, y_test_log,
-                baseline_pred_log,
-            )
-        else:
-            pipeline = _build_pipeline(experiment)
-            logger.info("Fitting %s model…", experiment.model_type)
-            pipeline.fit(X_train, y_train_log)
-            y_pred_log = pipeline.predict(X_test)
-            test_metrics_dict = evaluate_on_test(
-                model_pred=y_pred_log,
-                baseline_pred=baseline_pred_log,
-                y_true=y_test_log,
-                log_transformed=True,
-            )
-            test_metrics = test_metrics_dict["model"]
-            baseline_test_metrics = test_metrics_dict["baseline"]
+        pipeline = _build_pipeline(experiment)
+        logger.info("Fitting %s model…", experiment.model_type)
+        pipeline.fit(X_train, y_train_log)
+        y_pred_log = pipeline.predict(X_test)
+        test_metrics_dict = evaluate_on_test(
+            model_pred=y_pred_log,
+            baseline_pred=baseline_pred_log,
+            y_true=y_test_log,
+            log_transformed=True,
+        )
+        test_metrics = test_metrics_dict["model"]
+        baseline_test_metrics = test_metrics_dict["baseline"]
 
-            mlflow.log_metrics(
-                {f"baseline_{k}": v for k, v in baseline_test_metrics.to_dict().items()}
-            )
+        mlflow.log_metrics(
+            {f"baseline_{k}": v for k, v in baseline_test_metrics.to_dict().items()}
+        )
 
-            y_true_price = np.expm1(y_test_log)
-            y_pred_price = np.expm1(y_pred_log)
-            y_baseline_price = np.expm1(baseline_pred_log)
-            _create_evaluation_plots(
-                y_true=y_true_price,
-                y_pred_model=y_pred_price,
-                y_pred_baseline=y_baseline_price,
-                model_name=experiment.model_type.value,
-            )
+        y_true_price = np.expm1(y_test_log)
+        y_pred_price = np.expm1(y_pred_log)
+        y_baseline_price = np.expm1(baseline_pred_log)
+        _create_evaluation_plots(
+            y_true=y_true_price,
+            y_pred_model=y_pred_price,
+            y_pred_baseline=y_baseline_price,
+            model_name=experiment.model_type.value,
+        )
 
         log_and_register_model(
             pipeline=pipeline,
@@ -315,66 +296,6 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
         )
 
     return pipeline, test_metrics
-
-
-def _train_xgboost_legacy(
-    experiment: Experiment,
-    train_df_pd,
-    X_train,  # noqa: N803
-    y_train_log: np.ndarray,
-    X_test,  # noqa: N803
-    y_test_log: np.ndarray,
-    baseline_pred_log: np.ndarray,
-) -> tuple[object, RegressionMetrics]:
-    """Legacy XGBoost+Optuna training path (deprecated).
-
-    Uses the pre-computed ``baseline_pred_log`` from the main ``train()`` call
-    and ``train_df_pd`` (which includes ``date_of_transfer``) for CV splits.
-    """
-    import optuna
-
-    from src.models.cv import make_cv_splits
-    from src.models.xgboost_model import build_xgboost_pipeline, xgboost_objective  # type: ignore[import]  # noqa: F401
-
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
-
-    cv_splits = make_cv_splits(train_df_pd, experiment.cv_config)
-
-    sampler = (
-        optuna.samplers.TPESampler(seed=42)
-        if experiment.hpo_config.sampler == "tpe"
-        else optuna.samplers.RandomSampler(seed=42)
-    )
-    study = optuna.create_study(
-        direction="minimize",
-        sampler=sampler,
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=2),
-    )
-    study.optimize(
-        lambda trial: xgboost_objective(
-            trial,
-            X_train=X_train,
-            y_train=y_train_log,
-            cv_splits=cv_splits,
-            feature_config=experiment.feature_config,
-        ),
-        n_trials=experiment.hpo_config.n_trials,
-        timeout=experiment.hpo_config.timeout_seconds,
-        show_progress_bar=True,
-    )
-
-    best_params = study.best_params
-    pipeline = build_xgboost_pipeline(feature_config=experiment.feature_config, **best_params)
-    pipeline.fit(X_train, y_train_log)
-
-    y_pred_log = pipeline.predict(X_test)
-    test_metrics_dict = evaluate_on_test(
-        model_pred=y_pred_log,
-        baseline_pred=baseline_pred_log,
-        y_true=y_test_log,
-        log_transformed=True,
-    )
-    return pipeline, test_metrics_dict["model"]
 
 
 def predict(
