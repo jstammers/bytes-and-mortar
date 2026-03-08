@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import polars as pl
 
@@ -166,7 +166,8 @@ class SalesDataService(PropertyDataService):
 
         cols = self._cols(_INDEX_COLS)
 
-        return (
+        return cast(
+            "pl.DataFrame",
             self._scan()
             .select(cols)
             .filter(filter_expr)
@@ -179,7 +180,7 @@ class SalesDataService(PropertyDataService):
             .with_columns(
                 pl.col("date_of_transfer").dt.strftime("%Y-%m-%d").alias("last_sale_date")
             )
-            .collect()
+            .collect(),
         )
 
     # ------------------------------------------------------------------
@@ -218,7 +219,8 @@ class SalesDataService(PropertyDataService):
         txn_cols = self._cols(
             ["transaction_id", "price", "date_of_transfer", "postcode", "paon", "saon", "street"]
         )
-        df = (
+        df = cast(
+            "pl.DataFrame",
             self._scan()
             .select(txn_cols)
             .filter(
@@ -230,7 +232,7 @@ class SalesDataService(PropertyDataService):
                 pl.col("date_of_transfer").dt.strftime("%Y-%m-%d").alias("date"),
             )
             .sort("date")
-            .collect()
+            .collect(),
         )
 
         return df.to_dicts()
@@ -244,7 +246,8 @@ class SalesDataService(PropertyDataService):
         district_upper = prop["district"].upper()
 
         txn_cols = self._cols(["price", "date_of_transfer", "postcode", "paon", "saon", "street"])
-        prop_txns = (
+        prop_txns = cast(
+            "pl.DataFrame",
             self._scan()
             .select(txn_cols)
             .filter(
@@ -255,7 +258,7 @@ class SalesDataService(PropertyDataService):
                 pl.col("date_of_transfer").dt.strftime("%Y-%m-%d").alias("date"),
             )
             .sort("date")
-            .collect()
+            .collect(),
         )
 
         # HPI timeseries: one averageprice per year-month for the district.
@@ -263,14 +266,15 @@ class SalesDataService(PropertyDataService):
         hpi_rows: list[dict] = []
         if "averageprice" in self._schema:
             hpi_cols = self._cols(["district", "year", "month", "averageprice"])
-            hpi_df = (
+            hpi_df = cast(
+                "pl.DataFrame",
                 self._scan()
                 .select(hpi_cols)
                 .filter(pl.col("district") == district_upper)
                 .filter(pl.col("averageprice").is_not_null())
                 .unique(subset=["year", "month"])
                 .sort(["year", "month"])
-                .collect()
+                .collect(),
             )
             hpi_rows = hpi_df.to_dicts()
 
@@ -298,7 +302,8 @@ class SalesDataService(PropertyDataService):
         max_area = floor_area * 1.4
         cols = self._cols(_INDEX_COLS)
 
-        df = (
+        df = cast(
+            "pl.DataFrame",
             self._scan()
             .select(cols)
             .filter(pl.col("district") == district_upper)
@@ -310,7 +315,7 @@ class SalesDataService(PropertyDataService):
             .with_columns(
                 pl.col("date_of_transfer").dt.strftime("%Y-%m-%d").alias("last_sale_date")
             )
-            .collect()
+            .collect(),
         )
 
         prop_type_code = prop["property_type_code"]
