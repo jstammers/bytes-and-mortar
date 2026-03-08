@@ -31,8 +31,12 @@ jobs:
 
       - name: Commit changelog
         run: |
+          cp CHANGELOG.md /tmp/CHANGELOG.md
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          git checkout master
+          cp /tmp/CHANGELOG.md CHANGELOG.md
           git add CHANGELOG.md
           git commit -m "docs(changelog): update for ${{ github.ref_name }}" || echo "No changes to commit"
-          git push origin HEAD:master
+          git push origin master
