@@ -8,6 +8,7 @@ class PropertySearchResult(BaseModel):
     district: str
     property_type: str  # full name e.g. "Flat/Maisonette"
     property_type_code: str  # D/S/T/F
+    tenure: str  # Freehold / Leasehold
     last_sale_price: int
     last_sale_date: str
     energy_rating: str | None
@@ -23,6 +24,8 @@ class PropertyDetail(BaseModel):
     property_type: str
     property_type_code: str
     tenure: str
+    last_sale_price: int
+    last_sale_date: str
     energy_rating: str | None
     current_energy_efficiency: int | None
     potential_energy_efficiency: int | None
@@ -59,9 +62,9 @@ class SimilarProperty(BaseModel):
     address: str
     postcode: str
     property_type: str
-    floor_area: float
-    bedrooms: int
-    energy_rating: str
+    floor_area: float | None
+    bedrooms: int | None
+    energy_rating: str | None
     last_sale_price: int
     last_sale_date: str
     similarity_score: float

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.app.models import (
     AreaComparisonData,
@@ -10,17 +12,17 @@ from src.app.models import (
     PropertySearchResult,
     SimilarProperty,
 )
+from src.app.services.base import PropertyDataService, get_data_service
 
 router = APIRouter()
 
 
 @router.get("/search", response_model=list[PropertySearchResult])
 async def search_properties(
-    request: Request,
+    data_service: Annotated[PropertyDataService, Depends(get_data_service)],
     q: str = Query(..., min_length=1, description="Postcode prefix or address substring"),
 ) -> list[PropertySearchResult]:
-    service = request.app.state.mock_data
-    results = service.search_properties(q)
+    results = data_service.search_properties(q)
     return [
         PropertySearchResult(
             id=p["id"],
@@ -29,6 +31,7 @@ async def search_properties(
             district=p["district"],
             property_type=p["property_type"],
             property_type_code=p["property_type_code"],
+            tenure=p.get("tenure", "Unknown"),
             last_sale_price=p["last_sale_price"],
             last_sale_date=p["last_sale_date"],
             energy_rating=p.get("energy_rating"),
@@ -40,9 +43,11 @@ async def search_properties(
 
 
 @router.get("/{property_id}", response_model=PropertyDetail)
-async def get_property(request: Request, property_id: str) -> PropertyDetail:
-    service = request.app.state.mock_data
-    prop = service.get_property(property_id)
+async def get_property(
+    data_service: Annotated[PropertyDataService, Depends(get_data_service)],
+    property_id: str,
+) -> PropertyDetail:
+    prop = data_service.get_property(property_id)
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
     return PropertyDetail(
@@ -52,7 +57,9 @@ async def get_property(request: Request, property_id: str) -> PropertyDetail:
         district=prop["district"],
         property_type=prop["property_type"],
         property_type_code=prop["property_type_code"],
-        tenure=prop["tenure"],
+        tenure=prop.get("tenure", "Unknown"),
+        last_sale_price=prop["last_sale_price"],
+        last_sale_date=prop["last_sale_date"],
         energy_rating=prop.get("energy_rating"),
         current_energy_efficiency=prop.get("current_energy_efficiency"),
         potential_energy_efficiency=prop.get("potential_energy_efficiency"),
@@ -66,12 +73,14 @@ async def get_property(request: Request, property_id: str) -> PropertyDetail:
 
 
 @router.get("/{property_id}/history", response_model=PropertyHistory)
-async def get_price_history(request: Request, property_id: str) -> PropertyHistory:
-    service = request.app.state.mock_data
-    prop = service.get_property(property_id)
+async def get_price_history(
+    data_service: Annotated[PropertyDataService, Depends(get_data_service)],
+    property_id: str,
+) -> PropertyHistory:
+    prop = data_service.get_property(property_id)
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-    transactions = service.get_price_history(property_id)
+    transactions = data_service.get_price_history(property_id)
     return PropertyHistory(
         property_id=property_id,
         transactions=[
@@ -86,12 +95,14 @@ async def get_price_history(request: Request, property_id: str) -> PropertyHisto
 
 
 @router.get("/{property_id}/area-comparison", response_model=AreaComparisonData)
-async def get_area_comparison(request: Request, property_id: str) -> AreaComparisonData:
-    service = request.app.state.mock_data
-    prop = service.get_property(property_id)
+async def get_area_comparison(
+    data_service: Annotated[PropertyDataService, Depends(get_data_service)],
+    property_id: str,
+) -> AreaComparisonData:
+    prop = data_service.get_property(property_id)
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-    data = service.get_area_comparison(property_id)
+    data = data_service.get_area_comparison(property_id)
     return AreaComparisonData(
         property_id=data["property_id"],
         district=data["district"],
@@ -104,24 +115,23 @@ async def get_area_comparison(request: Request, property_id: str) -> AreaCompari
 
 @router.get("/{property_id}/similar", response_model=list[SimilarProperty])
 async def get_similar_properties(
-    request: Request,
+    data_service: Annotated[PropertyDataService, Depends(get_data_service)],
     property_id: str,
     n: int = Query(default=8, ge=1, le=20),
 ) -> list[SimilarProperty]:
-    service = request.app.state.mock_data
-    prop = service.get_property(property_id)
+    prop = data_service.get_property(property_id)
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-    similar = service.get_similar_properties(property_id, n=n)
+    similar = data_service.get_similar_properties(property_id, n=n)
     return [
         SimilarProperty(
             id=s["id"],
             address=s["address"],
             postcode=s["postcode"],
             property_type=s["property_type"],
-            floor_area=s["floor_area"],
-            bedrooms=s["bedrooms"],
-            energy_rating=s["energy_rating"],
+            floor_area=s.get("floor_area"),
+            bedrooms=s.get("bedrooms"),
+            energy_rating=s.get("energy_rating"),
             last_sale_price=s["last_sale_price"],
             last_sale_date=s["last_sale_date"],
             similarity_score=s["similarity_score"],

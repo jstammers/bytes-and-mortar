@@ -249,7 +249,7 @@ class EPCData(DataSource):
         max_pages: int = 100000,
     ) -> Path:
         """Download EPC data using search API with filters."""
-        params = {"size": EPC_PAGE_SIZE}
+        params: dict[str, int | str] = {"size": EPC_PAGE_SIZE}
         filename_parts = ["epc_domestic"]
 
         if local_authority:
