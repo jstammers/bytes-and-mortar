@@ -4,62 +4,59 @@ Uses Ridge regression (L2 regularisation) on log1p-transformed prices.
 The log transformation maps the right-skewed price distribution to
 approximate normality, making linear assumptions more defensible.
 
+Alpha is selected automatically via ``RidgeCV`` (leave-one-out CV over a
+log-spaced grid from 1e-3 to 1e3) — no separate HPO loop required.
+
 Sklearn pipeline structure::
 
-    FeaturePipeline | Ridge(alpha=...)
-
-Hyperparameter search space (Optuna):
-    alpha: Log-uniform [1e-3, 1e3]
+    FeaturePipeline → RidgeCV(alphas=logspace(-3, 3, 13))
 
 Usage::
 
-    from src.models.linear import build_linear_pipeline, linear_objective
+    from src.models.linear import build_linear_pipeline
 
-    pipeline = build_linear_pipeline(alpha=10.0)
+    pipeline = build_linear_pipeline()
     pipeline.fit(X_train, y_train_log)
+    y_pred_log = pipeline.predict(X_test)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import RidgeCV
 from sklearn.pipeline import Pipeline
 
 from src.features.build_features import FeatureConfig, build_feature_pipeline
 
-if TYPE_CHECKING:
-    import optuna
-    import pandas as pd
-
 logger = logging.getLogger(__name__)
+
+# Log-spaced alpha grid: equivalent search space to the old Optuna [1e-3, 1e3]
+_RIDGE_ALPHAS = np.logspace(-3, 3, 13)
 
 
 def build_linear_pipeline(
     feature_config: FeatureConfig | None = None,
-    alpha: float = 1.0,
 ) -> Pipeline:
-    """Return an unfitted Ridge regression pipeline.
+    """Return an unfitted Ridge regression pipeline with automatic alpha selection.
 
     The pipeline is:
         1. ``FeaturePipeline`` (ColumnTransformer with imputation + encoding + scaling)
-        2. ``Ridge`` with the given ``alpha``
+        2. ``RidgeCV`` which internally selects the best L2 regularisation strength
 
-    Ridge is preferred over plain OLS because: (a) property data has many
-    correlated features, (b) regularisation prevents overfitting on smaller
-    regional datasets.
+    Ridge is preferred over plain OLS because property data has many correlated
+    features and regularisation prevents overfitting on smaller regional datasets.
+    ``RidgeCV`` replaces the previous Optuna HPO loop — it achieves the same
+    result deterministically in a fraction of the time.
 
-    The target must be log1p-transformed *before* calling ``fit``.  The pipeline
-    itself does not transform y.  Callers should apply ``np.expm1`` to undo the
-    log when converting predictions back to GBP.
+    The target must be log1p-transformed *before* calling ``fit``. Callers
+    should apply ``np.expm1`` to undo the log when converting back to GBP.
 
     Args:
-        feature_config: Feature engineering config.  Defaults to
+        feature_config: Feature engineering config. Defaults to
             ``FeatureConfig(missing_strategy=MissingStrategy.impute)``
             since Ridge cannot handle NaN inputs.
-        alpha: Ridge regularisation strength.  Higher values = more shrinkage.
 
     Returns:
         Unfitted ``sklearn.pipeline.Pipeline``.
@@ -67,7 +64,6 @@ def build_linear_pipeline(
     from src.features.build_features import MissingStrategy
 
     if feature_config is None:
-        # Linear models require imputation — passthrough will error on NaN
         feature_config = FeatureConfig(missing_strategy=MissingStrategy.impute)
     elif feature_config.missing_strategy == MissingStrategy.passthrough:
         logger.warning(
@@ -86,60 +82,6 @@ def build_linear_pipeline(
     return Pipeline(
         [
             ("feature_pipeline", feature_pipeline),
-            ("model", Ridge(alpha=alpha, fit_intercept=True)),
+            ("model", RidgeCV(alphas=_RIDGE_ALPHAS, fit_intercept=True)),
         ]
     )
-
-
-def linear_objective(
-    trial: optuna.Trial,
-    X_train: pd.DataFrame,  # noqa: N803
-    y_train: np.ndarray,
-    cv_splits: list[tuple[np.ndarray, np.ndarray]],
-    feature_config: FeatureConfig,
-) -> float:
-    """Optuna objective function for Ridge hyperparameter optimisation.
-
-    Performs k-fold cross-validation using pre-computed ``cv_splits`` and
-    returns mean CV RMSE (in log-price space — Optuna minimises this).
-
-    Args:
-        trial: Optuna trial object used to sample hyperparameters.
-        X_train: Training features (pre-split, full training set).
-        y_train: Log1p-transformed prices for training rows.
-        cv_splits: List of ``(train_idx, val_idx)`` from ``make_cv_splits``.
-        feature_config: Feature engineering configuration.
-
-    Returns:
-        Mean CV RMSE across folds (log-price space, lower is better).
-    """
-    import optuna
-
-    alpha = trial.suggest_float("alpha", 1e-3, 1e3, log=True)
-
-    fold_rmses: list[float] = []
-    for fold, (train_idx, val_idx) in enumerate(cv_splits):
-        X_fold_train = X_train.iloc[train_idx]  # noqa: N806
-        X_fold_val = X_train.iloc[val_idx]  # noqa: N806
-        y_fold_train = y_train[train_idx]
-        y_fold_val = y_train[val_idx]
-
-        pipeline = build_linear_pipeline(feature_config=feature_config, alpha=alpha)
-
-        try:
-            pipeline.fit(X_fold_train, y_fold_train)
-            y_pred = pipeline.predict(X_fold_val)
-            rmse = float(np.sqrt(np.mean((y_fold_val - y_pred) ** 2)))
-            fold_rmses.append(rmse)
-        except Exception as exc:
-            logger.warning("Fold %d failed: %s", fold, exc)
-            raise optuna.exceptions.TrialPruned() from exc
-
-        # Report intermediate value for Optuna pruner
-        trial.report(float(np.mean(fold_rmses)), step=fold)
-        if trial.should_prune():
-            raise optuna.exceptions.TrialPruned()
-
-    mean_rmse = float(np.mean(fold_rmses))
-    logger.debug("Trial alpha=%.4f -> CV RMSE=%.4f", alpha, mean_rmse)
-    return mean_rmse

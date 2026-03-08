@@ -19,7 +19,7 @@ Usage::
     from src.models.registry import setup_mlflow, log_and_register_model
 
     setup_mlflow(experiment)
-    with mlflow.start_run(run_name="xgboost_trial_42") as run:
+    with mlflow.start_run(run_name="perpetual_train") as run:
         log_and_register_model(pipeline, experiment, metrics, run)
 """
 
@@ -83,7 +83,6 @@ def log_params_and_tags(experiment: Experiment) -> None:
     mlflow.set_tags(
         {
             "model_type": experiment.model_type.value,
-            "cv_strategy": experiment.cv_config.strategy.value,
             "data_path": str(experiment.data_path),
         }
     )

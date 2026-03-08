@@ -13,7 +13,10 @@ UK property data ingestion pipeline that downloads, cleans, links, and saves dat
 ## Tech stack
 
 - **Python 3.11+** with **uv** for dependency management
-- **pandas** for data processing
+- **pandas** / **polars** for data processing
+- **perpetual** for GBM model training (self-tuning, no HPO required)
+- **scikit-learn** for pipelines, RidgeCV, preprocessing, evaluation
+- **mlflow** for experiment tracking
 - **typer** for CLI interface
 - **ruff** for linting and formatting
 - **ty** for type checking
@@ -44,8 +47,32 @@ src/
       land_registry.py  # HM Land Registry Price Paid
       epc.py            # Energy Performance Certificates
       uk_hpi.py         # UK House Price Index
+  features/
+    build_features.py   # FeatureConfig, pipeline builder, MedianByGroupBaseline
+  models/
+    config.py           # Experiment, PerpetualConfig, ModelType dataclasses
+    perpetual_model.py  # Perpetual GBM pipeline (primary model)
+    linear.py           # RidgeCV pipeline
+    cv.py               # Time-series CV utilities
+    evaluate.py         # RegressionMetrics, compute_metrics
+    registry.py         # MLflow tracking and model registry helpers
+    train_model.py      # train() orchestrator + Typer CLI subcommands
 tests/                  # pytest tests mirroring src structure
 ```
+
+## Model training
+
+The primary model is **Perpetual GBM** — a self-tuning gradient booster with a single `budget` hyperparameter. No HPO loop or cross-validation is needed:
+
+```bash
+# Default: perpetual, budget=1.0, test_years=2024
+just train
+
+# Custom budget
+uv run bytes-and-mortar train run --budget 0.5
+```
+
+`budget=1.0` matches XGBoost+Optuna accuracy (MdAPE 16.1% vs 16.0%) while being ~12× faster (33s vs 6.4min on 3M rows).
 
 ## Code style
 

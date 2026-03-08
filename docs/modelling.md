@@ -27,14 +27,10 @@ data/processed/uk_property_sales.parquet
   • Log class-distribution balance by property_type
         │
         ▼
-  Optuna HPO + Time-Series CV  src/models/train_model.py
-  ───────────────────────────
-  • 3 CV strategies (sliding window, expanding window, year-based)
-  • Each Optuna trial is a nested MLflow child run
-  • Optimise CV RMSE in log-price space
-        │
-        ▼
-  Retrain on Full Training Set
+  Fit Model                    src/models/train_model.py
+  ──────────────────────────
+  • PerpetualBooster(budget=1.0) — self-tuning, no HPO loop
+  • Single fit on full training set
         │
         ▼
   Evaluate vs Baseline         src/models/evaluate.py
@@ -80,12 +76,12 @@ EPC data is only available for ~50–70% of sales (the join is a left join on po
 
 | Strategy | Behaviour | Best for |
 |---|---|---|
-| `impute` (default) | Median imputation for numerics, most-frequent for categoricals | Linear models; all models when EPC coverage is low |
+| `impute` (default) | Median imputation for numerics, most-frequent for categoricals | All models; safest default |
 | `drop` | Remove rows with any missing feature | Clean comparison; reduces dataset size |
-| `passthrough` | Leave `NaN` in place | XGBoost only — it handles missing values natively via the `hist` tree method |
+| `passthrough` | Leave `NaN` in place | Perpetual — handles missing values natively |
 
 ```bash
-bytes-and-mortar train run --missing-strategy passthrough --model-type xgboost
+bytes-and-mortar train run --missing-strategy passthrough
 ```
 
 ### Target encoding for `district`
@@ -96,47 +92,44 @@ For the Bayesian model (see below), district is encoded as an integer index and 
 
 ### Log transformation of price
 
-UK house prices are strongly right-skewed (£50k bedsits to £10M penthouses). A `log1p` transformation maps the distribution to approximate normality, which is a prerequisite for the linear model and also benefits XGBoost by making the loss landscape more balanced. All metrics are reported in original GBP space after `expm1` inversion.
+UK house prices are strongly right-skewed (£50k bedsits to £10M penthouses). A `log1p` transformation maps the distribution to approximate normality, which is a prerequisite for the linear model and also makes the GBM loss landscape more balanced. All metrics are reported in original GBP space after `expm1` inversion.
 
 ---
 
 ## Model Architectures
 
-### 1. Ridge regression on log-price
+### 1. Perpetual GBM (default)
+
+**File:** `src/models/perpetual_model.py`
+
+A self-tuning gradient boosting machine from [perpetual-ml](https://github.com/perpetual-ml/perpetual). Perpetual automatically selects the number of trees based on a single `budget` parameter — no hyperparameter search loop required.
+
+**Benchmarks on 10% of the full UK property dataset (2.9M train rows, 87k 2024 test rows):**
+
+| Model | MdAPE | RMSE (£) | Training time |
+|---|---|---|---|
+| Perpetual (budget=1.0) | 16.1% | £288,002 | 33s |
+| Median baseline | 41.8% | £403,374 | <1s |
+
+**The `budget` parameter:**
+
+| Value | MdAPE | Time | When to use |
+|---|---|---|---|
+| 0.5 | 16.7% | 16s | Fast iteration, dev testing |
+| 0.7 | 16.2% | 20s | Balanced speed/accuracy |
+| 1.0 (default) | 16.1% | 33s | Production |
+
+Increase `budget` further if accuracy is still insufficient after reviewing residuals.
+
+### 2. Ridge regression on log-price
 
 **File:** `src/models/linear.py`
 
-A simple baseline linear model: sklearn `Ridge` trained on `log1p(price)`. Ridge (L2 regularisation) is preferred over plain OLS because:
+A simple interpretable model: sklearn `RidgeCV` trained on `log1p(price)`. `RidgeCV` selects the optimal L2 regularisation strength via leave-one-out cross-validation over a log-spaced grid `[1e-3, 1e3]` — no external HPO required.
 
-- UK property features are correlated (floor area, number of rooms, energy efficiency)
-- Regularisation prevents overfitting on smaller regional datasets
+Ridge is preferred over plain OLS because UK property features are correlated (floor area, rooms, energy efficiency) and regularisation prevents overfitting on smaller regional datasets.
 
-**Hyperparameter search space:**
-
-| Parameter | Range |
-|---|---|
-| `alpha` (regularisation strength) | Log-uniform [1e-3, 1e3] |
-
-Linear models require imputed inputs — if `missing_strategy=passthrough` is specified for a linear model, the pipeline automatically falls back to `impute` with a warning.
-
-### 2. XGBoost
-
-**File:** `src/models/xgboost_model.py`
-
-XGBoost with the `hist` tree method. Handles missing values natively (no imputation required), captures non-linear feature interactions, and is typically the strongest single model on tabular property data.
-
-**Hyperparameter search space:**
-
-| Parameter | Range |
-|---|---|
-| `n_estimators` | int [100, 1000] |
-| `max_depth` | int [3, 10] |
-| `learning_rate` | Log-uniform [1e-3, 0.3] |
-| `subsample` | [0.6, 1.0] |
-| `colsample_bytree` | [0.6, 1.0] |
-| `min_child_weight` | int [1, 10] |
-| `reg_alpha` (L1) | Log-uniform [1e-8, 10] |
-| `reg_lambda` (L2) | Log-uniform [1e-8, 10] |
+Linear models require imputed inputs — if `missing_strategy=passthrough` is specified, the pipeline automatically falls back to `impute` with a warning.
 
 ### 3. Bayesian hierarchical model (experimental)
 
@@ -180,63 +173,19 @@ Every training run is automatically compared against a `MedianByGroupBaseline`:
 
 ---
 
-## Cross-Validation Strategies
+## Cross-Validation Utilities
 
-Property data has a strong temporal structure — prices in 2024 are correlated with prices in 2023 but not with prices in 2010 in the same way. Standard k-fold CV would allow future data to leak into training folds, producing optimistic estimates. All three supported strategies respect temporal order:
+The functions in `src/models/cv.py` are available for exploratory analysis but are not part of the default training loop. The Perpetual and Ridge training paths fit directly on the full training set without k-fold CV — Perpetual self-tunes via `budget`; `RidgeCV` self-selects alpha via leave-one-out CV internally.
 
-### Sliding window (default)
+If you want to run CV splits manually (e.g. for model comparison studies), three strategies are supported:
 
-A fixed-size training window advances one fold at a time. Each fold uses approximately the same amount of training data, making fold-to-fold comparisons fair.
+- **Sliding window** — fixed-size training window advances per fold
+- **Expanding window** — training set grows with each fold
+- **Year-based** — one calendar year held out per fold
 
-```
-Fold 1:  [──train──]  [gap]  [val]
-Fold 2:        [──train──]  [gap]  [val]
-Fold 3:              [──train──]  [gap]  [val]
-```
+All strategies support a `gap_months` buffer between the end of the training window and the start of validation, preventing leakage from properties that take weeks to register with the Land Registry.
 
-Best for: comparing model architectures on equal footing.
-
-### Expanding window
-
-Training set grows with each fold — all history up to the cutoff. Rewards models that benefit from more data.
-
-```
-Fold 1:  [──train────────────]  [gap]  [val]
-Fold 2:  [────────train──────────────]  [gap]  [val]
-Fold 3:  [──────────────train──────────────────]  [gap]  [val]
-```
-
-Best for: assessing whether the model improves with more historical data.
-
-### Year-based
-
-One calendar year is held out per fold. Training set is all transactions before the held-out year minus the gap.
-
-```
-Fold 1:  [───all prior years───]  [gap]  [2022]
-Fold 2:  [───all prior years───]  [gap]  [2023]
-Fold 3:  [───all prior years───]  [gap]  [2024]
-```
-
-Best for: year-over-year performance reporting.
-
-### The `gap_months` parameter
-
-All strategies support a `gap_months` buffer (default: 1) between the end of the training window and the start of the validation window. Land Registry transactions can take weeks to register after completion — a gap prevents boundary-period leakage.
-
----
-
-## Hyperparameter Optimisation
-
-[Optuna](https://optuna.org) is used for HPO with the Tree-structured Parzen Estimator (TPE) sampler. Each trial:
-
-1. Samples a hyperparameter configuration
-2. Runs time-series cross-validation on the training set
-3. Returns mean CV RMSE (log-price space) as the objective
-4. Reports intermediate fold results to Optuna's pruner (median pruning) so poor trials are stopped early
-5. Logs params and CV RMSE to a nested MLflow child run
-
-The best configuration is then retrained on the full training set before final evaluation on the held-out test years.
+See `scripts/evaluate_perpetual_vs_xgboost.py` for an example of manual CV use in a comparative evaluation.
 
 ---
 
@@ -256,12 +205,9 @@ All metrics are computed in **original GBP price space** (after `expm1` inversio
 
 ## MLflow Experiment Tracking
 
-Each `bytes-and-mortar train run` invocation creates:
+Each `bytes-and-mortar train run` invocation creates a **run** containing all experiment params, test metrics, evaluation plots, and the fitted model artefact.
 
-- A **parent run** containing all experiment params, CV summary metrics, and the final model artefact
-- **Child runs** for each Optuna trial (params + CV RMSE)
-
-Experiments are organised as `<name>/<model_type>` (e.g. `uk_property_price/xgboost`) so different architectures can be filtered and compared in the MLflow UI.
+Experiments are organised as `<name>/<model_type>` (e.g. `uk_property_price/perpetual`) so different architectures can be filtered and compared in the MLflow UI.
 
 ### Launching the UI
 
@@ -297,18 +243,12 @@ predictions = pipeline.predict(X_new)
 bytes-and-mortar train run [OPTIONS]
 
 Options:
-  -m, --model-type     [linear|xgboost]    Model architecture (default: xgboost)
+  -m, --model-type     [perpetual|linear]  Model architecture (default: perpetual)
+  --budget             FLOAT               Perpetual budget — higher = more accurate,
+                                           slower (default: 1.0)
   --data-path          PATH                Path to processed parquet (default: auto)
   --nrows              INT                 Limit rows loaded for development
   --test-years         TEXT                Comma-separated holdout years (default: 2024)
-  --cv-strategy        [sliding_window|    Time-series CV strategy
-                        expanding_window|  (default: sliding_window)
-                        year_based]
-  --cv-n-splits        INT                 Number of CV folds (default: 5)
-  --cv-gap-months      INT                 Months gap between train/val (default: 1)
-  --cv-window-months   INT                 Training window in months (default: 24)
-  --n-trials           INT                 Optuna HPO trials (default: 50)
-  --timeout            INT                 Max HPO time in seconds
   --missing-strategy   [impute|drop|       Missing value handling
                         passthrough]       (default: impute)
   --log-transform /    --no-log-transform  Log1p-transform price target (default: on)
@@ -323,31 +263,25 @@ Options:
 ## Python API
 
 ```python
-from src.models.config import Experiment, CVConfig, HPOConfig, CVStrategy, ModelType
+from src.models.config import Experiment, PerpetualConfig, ModelType
 from src.features.build_features import FeatureConfig, MissingStrategy
 from src.models.train_model import train, predict
 
 experiment = Experiment(
-    model_type=ModelType.xgboost,
+    model_type=ModelType.perpetual,
     feature_config=FeatureConfig(
         numeric_features=["year", "month", "total_floor_area", "current_energy_efficiency"],
         categorical_features=["property_type", "old_new", "duration"],
         target_encode_features=["district"],
         missing_strategy=MissingStrategy.impute,
     ),
-    cv_config=CVConfig(
-        strategy=CVStrategy.sliding_window,
-        n_splits=5,
-        gap_months=1,
-        window_months=24,
-    ),
-    hpo_config=HPOConfig(n_trials=100),
+    perpetual_config=PerpetualConfig(budget=1.0),
     test_years=[2024],
     register_model=True,
 )
 
 pipeline, metrics = train(experiment)
-print(metrics.summary("xgboost test"))
+print(metrics.summary())
 
 # Later: load best model and predict
 predictions = predict(input_df, model_name="uk_property_price")
@@ -357,12 +291,11 @@ predictions = predict(input_df, model_name="uk_property_price")
 
 ## Adding a New Model Architecture
 
-1. Create `src/models/<name>.py` with two functions:
-   - `build_<name>_pipeline(feature_config, **params) -> Pipeline`
-   - `<name>_objective(trial, X_train, y_train, cv_splits, feature_config) -> float`
+1. Create `src/models/<name>.py` with a `build_<name>_pipeline(feature_config, **params) -> Pipeline` function
 2. Add `<name>` to `ModelType` in `src/models/config.py`
-3. Wire into `_build_objective()` and `_build_best_pipeline()` in `src/models/train_model.py`
-4. Add tests in `tests/models/test_train_model.py`
+3. Add a corresponding config dataclass (e.g. `<Name>Config`) if the model has hyperparameters
+4. Wire into `_build_pipeline()` in `src/models/train_model.py`
+5. Add tests in `tests/models/test_train_model.py`
 
 The LightGBM case, for example, would be:
 
