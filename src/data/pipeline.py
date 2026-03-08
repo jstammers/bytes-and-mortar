@@ -408,7 +408,13 @@ def save_dataset(
 
 
 def _to_lazy(src: pl.DataFrame | pl.LazyFrame | Path) -> pl.LazyFrame:
-    """Coerce a DataFrame, LazyFrame, or Path to a LazyFrame."""
+    """Coerce a DataFrame, LazyFrame, or Path to a LazyFrame.
+
+    Path inputs must point to a ``.parquet`` or ``.csv`` file.  Parquet is
+    scanned with ``pl.scan_parquet``; CSV is scanned with ``pl.scan_csv``
+    using default options (suitable for files that have already been cleaned
+    by a source's ``load()`` method).
+    """
     if isinstance(src, Path):
         if not src.exists():
             raise FileNotFoundError(f"Data file not found: {src}")
@@ -438,9 +444,14 @@ def run_pipeline(
        on lmk_key → sink to the output destination via streaming.
 
     Args:
-        sales: Land Registry Price Paid Data (required).
-        epc: EPC data (optional).
-        hpi: UK HPI data (optional).
+        sales: Land Registry Price Paid Data (required).  Accepts a
+            LazyFrame/DataFrame or a ``Path`` to a ``.parquet`` or ``.csv``
+            file.  Parquet is preferred — pass a pre-built parquet to avoid
+            the CSV brace-stripping overhead on repeat runs.
+        epc: EPC data (optional — all certificates retained for temporal
+            matching).  Same type options as *sales*.
+        hpi: UK HPI data (optional — will enrich if provided).  Same type
+            options as *sales*.
         output_name: Name for the output file or partition directory.
         output_dir: Directory to save output.
         fmt: Output format.
