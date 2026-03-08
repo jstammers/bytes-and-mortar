@@ -57,15 +57,19 @@ download-hpi:
 run *args='':
     uv run bytes-and-mortar run {{ args }}
 
-# Install ML dependencies (scikit-learn, xgboost, optuna, mlflow)
+# Install ML dependencies (scikit-learn, perpetual, mlflow)
 install-ml:
     uv sync --extra dev --extra ml
+
+# Install legacy HPO dependencies (xgboost, optuna) — deprecated
+install-legacy:
+    uv sync --extra dev --extra ml --extra legacy
 
 # Install notebook dependencies (marimo, pymc)
 install-notebooks:
     uv sync --extra dev --extra ml --extra notebooks
 
-# Train a model (default: xgboost, sliding window CV, 50 HPO trials)
+# Train a model (default: perpetual, budget=1.0)
 train *args='':
     uv run bytes-and-mortar train run {{ args }}
 

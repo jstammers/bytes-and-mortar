@@ -24,11 +24,14 @@ A data pipeline and modelling toolkit for UK property valuation, combining Land 
 # Data pipeline only
 just install
 
-# Data pipeline + ML training (scikit-learn, XGBoost, Optuna, MLflow)
+# Data pipeline + ML training (scikit-learn, Perpetual, MLflow)
 just install-ml
 
 # All of the above + Bayesian notebook (PyMC, marimo)
 just install-notebooks
+
+# Legacy: XGBoost + Optuna (deprecated — use perpetual instead)
+just install-legacy
 ```
 
 ### Configuration
@@ -65,22 +68,18 @@ uv run bytes-and-mortar run --year 2024 --skip-epc
 ### 2. Train a model
 
 ```bash
-# Train XGBoost with defaults (50 Optuna trials, sliding window CV, 2024 held out)
+# Train with defaults (Perpetual, budget=1.0, 2024 held out)
 just train
 
-# Linear regression, expanding window, 20 trials
-uv run bytes-and-mortar train run \
-  --model-type linear \
-  --cv-strategy expanding_window \
-  --n-trials 20
+# Tune budget for faster training or higher accuracy
+uv run bytes-and-mortar train run --budget 0.5   # faster
+uv run bytes-and-mortar train run --budget 1.0   # default — matches XGBoost+Optuna accuracy
 
-# Compare all three CV strategies
-for strategy in sliding_window expanding_window year_based; do
-  uv run bytes-and-mortar train run --cv-strategy $strategy --n-trials 10
-done
+# Linear regression (RidgeCV — alpha auto-selected, no HPO needed)
+uv run bytes-and-mortar train run --model-type linear
 
-# Fast dev run (1000 rows, 3 trials)
-uv run bytes-and-mortar train run --nrows 1000 --n-trials 3
+# Fast dev run (1000 rows)
+uv run bytes-and-mortar train run --nrows 1000
 ```
 
 ### 3. Explore results in MLflow
@@ -130,11 +129,12 @@ bytes-and-mortar/
 │   ├── features/
 │   │   └── build_features.py       # FeatureConfig, pipeline builder, MedianByGroupBaseline
 │   └── models/
-│       ├── config.py               # Experiment, CVConfig, HPOConfig dataclasses
-│       ├── cv.py                   # Time-series CV splitters (3 strategies)
+│       ├── config.py               # Experiment, PerpetualConfig, ModelType dataclasses
+│       ├── cv.py                   # Time-series CV utilities (available for analysis)
 │       ├── evaluate.py             # RegressionMetrics, compute_metrics
-│       ├── linear.py               # Ridge pipeline + Optuna objective
-│       ├── xgboost_model.py        # XGBoost pipeline + Optuna objective
+│       ├── perpetual_model.py      # Perpetual GBM pipeline (primary model)
+│       ├── linear.py               # RidgeCV pipeline
+│       ├── xgboost_model.py        # XGBoost pipeline (deprecated)
 │       ├── registry.py             # MLflow tracking and model registry helpers
 │       └── train_model.py          # train() orchestrator + Typer CLI subcommands
 ├── notebooks/
@@ -173,9 +173,8 @@ bytes-and-mortar/
 
 1. **Feature engineering** — configurable column selection, missing value handling (drop / impute / passthrough), target encoding for `district`, standard scaling
 2. **Temporal split** — hold out one or more calendar years as the final test set
-3. **HPO** — Optuna with TPE sampler, each trial evaluated via time-series cross-validation (sliding window, expanding window, or year-based)
-4. **Retrain** — best hyperparameters fitted on the full training set
-5. **Evaluate** — RMSE, MAE, MAPE, MdAPE, R² compared against a `MedianByGroupBaseline(property_type × district)`
-6. **Log** — all params, CV metrics, and the fitted model artefact to MLflow; optional push to model registry
+3. **Fit** — `PerpetualBooster(budget=1.0)` self-tunes tree count; no HPO loop required
+4. **Evaluate** — RMSE, MAE, MAPE, MdAPE, R² compared against a `MedianByGroupBaseline(property_type × district)`
+5. **Log** — all params, metrics, and the fitted model artefact to MLflow; optional push to model registry
 
 See [docs/modelling.md](docs/modelling.md) for the full methodology, model architectures, and extension guide.

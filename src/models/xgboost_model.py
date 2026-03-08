@@ -1,11 +1,23 @@
 """XGBoost model for UK property price prediction.
 
-Uses the XGBoost sklearn wrapper (``xgb.XGBRegressor``) with the ``hist``
-tree method, which handles missing values natively — no imputation required,
-though imputation is still applied when ``FeatureConfig.missing_strategy=impute``.
+.. deprecated::
+    The XGBoost+Optuna training path has been superseded by
+    :mod:`src.models.perpetual_model`. Perpetual achieves equivalent accuracy
+    (MdAPE 16.1% vs 16.0%) while being ~12× faster and requiring no HPO loop.
+    This module is retained for reference but will be removed in a future release.
 
-Predicts ``log1p(price)`` so the loss landscape is better behaved across the
-wide UK price range (£50k bedsit → £10M penthouse).
+    Migrate by replacing::
+
+        from src.models.xgboost_model import build_xgboost_pipeline
+        pipeline = build_xgboost_pipeline(n_estimators=500, max_depth=6)
+
+    with::
+
+        from src.models.perpetual_model import build_perpetual_pipeline
+        pipeline = build_perpetual_pipeline(budget=1.0)
+
+Uses the XGBoost sklearn wrapper (``xgb.XGBRegressor``) with the ``hist``
+tree method, which handles missing values natively.
 
 Hyperparameter search space (Optuna):
     n_estimators:       int   [100, 1000]
@@ -16,19 +28,12 @@ Hyperparameter search space (Optuna):
     min_child_weight:   int   [1, 10]
     reg_alpha (L1):     float log-uniform [1e-8, 10]
     reg_lambda (L2):    float log-uniform [1e-8, 10]
-
-Usage::
-
-    from src.models.xgboost_model import build_xgboost_pipeline
-
-    pipeline = build_xgboost_pipeline(n_estimators=500, max_depth=6)
-    pipeline.fit(X_train, y_train_log)
-    y_pred_log = pipeline.predict(X_test)
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -41,6 +46,14 @@ if TYPE_CHECKING:
     import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+warnings.warn(
+    "src.models.xgboost_model is deprecated and will be removed in a future release. "
+    "Use src.models.perpetual_model.build_perpetual_pipeline(budget=1.0) instead — "
+    "it matches XGBoost+Optuna accuracy at ~12× faster training speed.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 # Default XGBoost parameters — reasonable starting point before HPO
 _XGBOOST_DEFAULTS: dict[str, int | float | str] = {

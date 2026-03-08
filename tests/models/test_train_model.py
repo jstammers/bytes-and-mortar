@@ -1,8 +1,8 @@
 """Integration tests for the train/predict orchestrator.
 
-These tests use a small synthetic dataset and n_trials=2 so they run quickly
-without requiring real processed data or a GPU.  MLflow is pointed at a
-temporary directory to avoid polluting the project's mlruns/.
+These tests use a small synthetic dataset so they run quickly without
+requiring real processed data or a GPU.  MLflow is pointed at a temporary
+directory to avoid polluting the project's mlruns/.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import polars as pl
 import pytest
 
 from src.features.build_features import FeatureConfig, MissingStrategy
-from src.models.config import CVConfig, CVStrategy, Experiment, HPOConfig, ModelType
+from src.models.config import Experiment, ModelType, PerpetualConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -68,7 +68,7 @@ def base_experiment(synthetic_df, tmp_path: Path) -> Experiment:
     """Minimal Experiment config pointing at the synthetic dataset."""
     parquet_path, _ = synthetic_df
     return Experiment(
-        model_type=ModelType.xgboost,
+        model_type=ModelType.perpetual,
         feature_config=FeatureConfig(
             numeric_features=[
                 "year",
@@ -80,13 +80,7 @@ def base_experiment(synthetic_df, tmp_path: Path) -> Experiment:
             target_encode_features=["district"],
             missing_strategy=MissingStrategy.impute,
         ),
-        cv_config=CVConfig(
-            strategy=CVStrategy.sliding_window,
-            n_splits=2,
-            gap_months=0,
-            window_months=8,
-        ),
-        hpo_config=HPOConfig(n_trials=2),
+        perpetual_config=PerpetualConfig(budget=0.5),
         data_path=parquet_path,
         test_years=[2023],
         register_model=False,
@@ -101,7 +95,7 @@ def base_experiment(synthetic_df, tmp_path: Path) -> Experiment:
 
 
 class TestTrain:
-    def test_train_xgboost_returns_pipeline_and_metrics(self, base_experiment):
+    def test_train_perpetual_returns_pipeline_and_metrics(self, base_experiment):
         from sklearn.pipeline import Pipeline
 
         from src.models.evaluate import RegressionMetrics
@@ -124,8 +118,6 @@ class TestTrain:
                 target_encode_features=["district"],
                 missing_strategy=MissingStrategy.impute,
             ),
-            cv_config=base_experiment.cv_config,
-            hpo_config=HPOConfig(n_trials=2),
             data_path=base_experiment.data_path,
             test_years=[2023],
             register_model=False,
@@ -167,18 +159,10 @@ class TestTrain:
     def test_missing_data_file_raises(self, base_experiment, tmp_path):
         from src.models.train_model import train
 
-        Experiment(
-            **{
-                **vars(base_experiment),
-                "data_path": tmp_path / "does_not_exist.parquet",
-            }
-        )
-        # Re-create to avoid dataclass mutation issues
         bad_experiment = Experiment(
             model_type=base_experiment.model_type,
             feature_config=base_experiment.feature_config,
-            cv_config=base_experiment.cv_config,
-            hpo_config=base_experiment.hpo_config,
+            perpetual_config=base_experiment.perpetual_config,
             data_path=tmp_path / "does_not_exist.parquet",
             test_years=base_experiment.test_years,
             register_model=False,
@@ -187,32 +171,6 @@ class TestTrain:
         )
         with pytest.raises(FileNotFoundError):
             train(bad_experiment)
-
-    @pytest.mark.parametrize("strategy", list(CVStrategy))
-    def test_all_cv_strategies(self, base_experiment, strategy, tmp_path):
-        from sklearn.pipeline import Pipeline
-
-        from src.models.train_model import train
-
-        experiment = Experiment(
-            model_type=ModelType.xgboost,
-            feature_config=base_experiment.feature_config,
-            cv_config=CVConfig(
-                strategy=strategy,
-                n_splits=2,
-                gap_months=0,
-                window_months=8,
-                holdout_years=[2022] if strategy == CVStrategy.year_based else None,
-            ),
-            hpo_config=HPOConfig(n_trials=2),
-            data_path=base_experiment.data_path,
-            test_years=[2023],
-            register_model=False,
-            mlflow_tracking_uri=f"file://{tmp_path / f'mlruns_{strategy}'}",
-            models_dir=tmp_path / f"models_{strategy}",
-        )
-        pipeline, _ = train(experiment)
-        assert isinstance(pipeline, Pipeline)
 
     @pytest.mark.parametrize("strategy", list(MissingStrategy))
     def test_all_missing_strategies(self, synthetic_df, tmp_path, strategy):
@@ -223,20 +181,14 @@ class TestTrain:
 
         parquet_path, _ = synthetic_df
         experiment = Experiment(
-            model_type=ModelType.xgboost,
+            model_type=ModelType.perpetual,
             feature_config=FeatureConfig(
                 numeric_features=["year", "total_floor_area"],
                 categorical_features=["property_type"],
                 target_encode_features=["district"],
                 missing_strategy=strategy,
             ),
-            cv_config=CVConfig(
-                strategy=CVStrategy.sliding_window,
-                n_splits=2,
-                gap_months=0,
-                window_months=8,
-            ),
-            hpo_config=HPOConfig(n_trials=2),
+            perpetual_config=PerpetualConfig(budget=0.5),
             data_path=parquet_path,
             test_years=[2023],
             register_model=False,
@@ -245,3 +197,27 @@ class TestTrain:
         )
         pipeline, _ = train(experiment)
         assert isinstance(pipeline, Pipeline)
+
+    def test_xgboost_emits_deprecation_warning(self, base_experiment, tmp_path):
+        """Using ModelType.xgboost should emit a DeprecationWarning."""
+        pytest.importorskip("xgboost", reason="xgboost not installed")
+        pytest.importorskip("optuna", reason="optuna not installed")
+
+        from src.models.train_model import train
+
+        experiment = Experiment(
+            model_type=ModelType.xgboost,
+            feature_config=FeatureConfig(
+                numeric_features=["year", "month", "total_floor_area"],
+                categorical_features=["property_type"],
+                target_encode_features=["district"],
+                missing_strategy=MissingStrategy.impute,
+            ),
+            data_path=base_experiment.data_path,
+            test_years=[2023],
+            register_model=False,
+            mlflow_tracking_uri=f"file://{tmp_path / 'mlruns_xgb'}",
+            models_dir=tmp_path / "models_xgb",
+        )
+        with pytest.warns(DeprecationWarning, match="xgboost"):
+            train(experiment)
