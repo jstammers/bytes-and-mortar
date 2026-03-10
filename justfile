@@ -71,7 +71,7 @@ train *args='':
 
 # Launch MLflow UI (uses sqlite backend for model registry support)
 mlflow-ui:
-    uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
+    uv run mlflow ui --backend-store-uri sqlite:///data/mlruns.db
 # Install app (API) dependencies
 install-app:
     uv sync --extra app
