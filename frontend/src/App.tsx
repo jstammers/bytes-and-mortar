@@ -3,6 +3,7 @@ import Navbar from './components/Navbar'
 import Home from './pages/Home'
 import PropertyDetail from './pages/PropertyDetail'
 import ValuationExplorer from './pages/ValuationExplorer'
+import MortgageCalculator from './pages/MortgageCalculator'
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/property/:id" element={<PropertyDetail />} />
           <Route path="/valuation" element={<ValuationExplorer />} />
+          <Route path="/mortgage" element={<MortgageCalculator />} />
         </Routes>
       </main>
     </div>

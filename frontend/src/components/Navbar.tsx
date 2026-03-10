@@ -19,6 +19,16 @@ export default function Navbar() {
             >
               Valuation Explorer
             </NavLink>
+            <NavLink
+              to="/mortgage"
+              className={({ isActive }) =>
+                `text-sm font-medium transition-colors ${
+                  isActive ? 'text-white underline underline-offset-4' : 'text-slate-300 hover:text-white'
+                }`
+              }
+            >
+              Mortgage Calculator
+            </NavLink>
           </div>
         </div>
       </div>
