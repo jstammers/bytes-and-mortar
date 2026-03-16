@@ -407,6 +407,66 @@ def save_dataset(
     return dest
 
 
+def save_hpi_regional(
+    hpi: pl.DataFrame | pl.LazyFrame,
+    output_dir: Path | None = None,
+    output_name: str = "uk_hpi_regional",
+) -> Path:
+    """Save cleaned UK HPI regional data to a dedicated parquet file.
+
+    Extracts the region name, year, month, date, and all price/index columns
+    from the HPI LazyFrame and writes them to ``uk_hpi_regional.parquet``
+    (separate from the individual transaction data).
+
+    The regional parquet is consumed by:
+    - ``src.features.build_features.join_hpi_to_sales`` during feature engineering
+    - ``src.app.services.sales_data.SalesDataService.get_hpi_series`` for the web app
+
+    Args:
+        hpi: Cleaned UK HPI LazyFrame (output of ``UKHousePriceIndex.clean()``).
+        output_dir: Override output directory. Defaults to ``PROCESSED_DIR``.
+        output_name: Base filename without extension.
+
+    Returns:
+        Path to the saved parquet file.
+    """
+    out_dir = output_dir or PROCESSED_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"{output_name}.parquet"
+
+    hpi_lf = hpi.lazy() if isinstance(hpi, pl.DataFrame) else hpi
+    col_names = hpi_lf.collect_schema().names()
+
+    # Region column
+    region_col = next((c for c in ["regionname", "region_name"] if c in col_names), None)
+
+    keep = []
+    if region_col:
+        keep.append(region_col)
+    _hpi_kw = {
+        "average_price",
+        "averageprice",
+        "index",
+        "percentage_change",
+        "percentagechange",
+        "%change",
+        "sales_volume",
+        "salesvolume",
+        "areacode",
+        "area_code",
+    }
+    for c in col_names:
+        if c in ("date", "year", "month") or any(kw in c for kw in _hpi_kw):
+            keep.append(c)
+
+    keep = list(dict.fromkeys(keep))  # deduplicate, preserve order
+    hpi_lf = hpi_lf.select(keep)
+
+    hpi_lf.sink_parquet(dest)
+    logger.info("Saved HPI regional data to %s", dest)
+    return dest
+
+
 def _to_lazy(src: pl.DataFrame | pl.LazyFrame | Path) -> pl.LazyFrame:
     """Coerce a DataFrame, LazyFrame, or Path to a LazyFrame.
 
@@ -433,7 +493,18 @@ def run_pipeline(
 ) -> pl.DataFrame:
     """Run the full data linking pipeline.
 
-    When EPC data is provided the join uses ``join_asof`` with
+    Saves two separate outputs when HPI data is provided:
+
+    1. **Individual transaction file** (``uk_property_sales.parquet``) —
+       Land Registry sales joined to EPC certificates.  HPI columns are
+       **not** embedded here; the feature engineering pipeline joins them
+       at training time via ``join_hpi_to_sales()``.
+
+    2. **Regional HPI file** (``uk_hpi_regional.parquet``) — one row per
+       region/month with average prices, index values, and percentage changes.
+       Consumed by the forecasting module and the web app.
+
+    When EPC data is provided the sales/EPC join uses ``join_asof`` with
     ``strategy="backward"`` (most recent pre-sale cert, exact address match)
     and runs in two passes:
 
@@ -450,15 +521,16 @@ def run_pipeline(
             the CSV brace-stripping overhead on repeat runs.
         epc: EPC data (optional — all certificates retained for temporal
             matching).  Same type options as *sales*.
-        hpi: UK HPI data (optional — will enrich if provided).  Same type
-            options as *sales*.
+        hpi: UK HPI data (optional).  When provided, saved to a separate
+            ``uk_hpi_regional.parquet`` file alongside the sales parquet.
+            Same type options as *sales*.
         output_name: Name for the output file or partition directory.
         output_dir: Directory to save output.
         fmt: Output format.
         partition_by: Column(s) to partition the parquet output by.
 
     Returns:
-        The collected DataFrame read back from the saved output.
+        The collected DataFrame read back from the saved sales output.
     """
     lf = _to_lazy(sales)
     logger.info("Building pipeline plan")
@@ -468,9 +540,6 @@ def run_pipeline(
         with tempfile.TemporaryDirectory(prefix="bytes_mortar_") as _tmp:
             phase1_path = Path(_tmp) / "phase1_dedup.parquet"
             lf = link_sales_to_epc(lf, epc_lf, _phase1_sink=phase1_path)
-            if hpi is not None:
-                hpi_lf = _to_lazy(hpi)
-                lf = enrich_with_hpi(lf, hpi_lf)
             logger.info("Executing pipeline (two-pass EPC join)")
             dest = save_dataset(
                 lf,
@@ -480,13 +549,15 @@ def run_pipeline(
                 partition_by=partition_by,
             )
     else:
-        if hpi is not None:
-            hpi_lf = _to_lazy(hpi)
-            lf = enrich_with_hpi(lf, hpi_lf)
         logger.info("Executing pipeline with streaming engine")
         dest = save_dataset(
             lf, output_name, output_dir=output_dir, fmt=fmt, partition_by=partition_by
         )
+
+    # Save HPI regional data to a dedicated file (separate from sales transactions).
+    if hpi is not None:
+        hpi_lf = _to_lazy(hpi)
+        save_hpi_regional(hpi_lf, output_dir=output_dir or PROCESSED_DIR)
 
     saved_lf = pl.scan_parquet(dest) if fmt == "parquet" else pl.scan_csv(dest)
     df = pl.DataFrame(saved_lf.collect())

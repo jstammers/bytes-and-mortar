@@ -49,6 +49,12 @@ Forecasting methods implemented
                         single model (Makridakis M5; Yusupova 2023).
                         Prediction intervals combined as weighted average of bounds.
 
+5. ARIMAXForecaster - SARIMAX extended with exogenous macro regressors.
+                      Accepts columns from the BoE (base rate, mortgage rate)
+                      or ONS (AWE, unemployment) data sources.  Future exogenous
+                      values must be supplied at forecast time; if omitted, the
+                      last observed value is propagated forward (flat-forward).
+
 Usage
 -----
 ::
@@ -609,6 +615,178 @@ class EnsembleForecaster(HPIForecaster):
 
         total = sum(raw)
         return [x / total for x in raw]
+
+
+# ---------------------------------------------------------------------------
+# ARIMAX
+# ---------------------------------------------------------------------------
+
+
+class ARIMAXForecaster(SARIMAForecaster):
+    """SARIMA with exogenous regressors (ARIMAX / SARIMAX-X).
+
+    Extends :class:`SARIMAForecaster` to accept macro-economic exogenous
+    variables such as the BoE base rate, mortgage rate, or unemployment.
+    The exog matrix is aligned to the HPI training dates before fitting.
+
+    Parameters
+    ----------
+    order, seasonal_order, auto_order:
+        As per :class:`SARIMAForecaster`.
+    exog_names:
+        Human-readable labels for the exogenous columns (used in metadata
+        and log messages only).
+
+    Usage
+    -----
+    ::
+
+        import polars as pl, numpy as np
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        hpi_values  = np.array([...])         # monthly HPI averageprices
+        hpi_dates   = [...]                   # list[date], same length
+        base_rate   = np.array([...])         # same length as hpi_values
+        future_rate = np.array([...])         # steps length (required for forecast)
+
+        fc = ARIMAXForecaster(exog_names=["base_rate"])
+        fc.fit(hpi_values, hpi_dates, exog=base_rate.reshape(-1, 1))
+        result = fc.forecast(steps=12, alpha=0.05,
+                             future_exog=future_rate.reshape(-1, 1))
+
+    Notes
+    -----
+    - Future exogenous values must be supplied to :meth:`forecast` via
+      *future_exog*.  If omitted, the last observed value is repeated
+      (naive flat-forward assumption).
+    - When ``auto_order=True`` the grid search uses no exogenous variables
+      for order selection (for speed); the final model is then re-fitted
+      with exog on the selected orders.
+    """
+
+    name = "arimax"
+
+    def __init__(
+        self,
+        order: tuple[int, int, int] = (1, 1, 1),
+        seasonal_order: tuple[int, int, int, int] = (1, 1, 1, 12),
+        auto_order: bool = False,
+        exog_names: list[str] | None = None,
+    ) -> None:
+        super().__init__(order=order, seasonal_order=seasonal_order, auto_order=auto_order)
+        self.exog_names = exog_names or []
+        self._last_exog_row: np.ndarray | None = None
+
+    def fit(  # type: ignore[override]
+        self,
+        values: np.ndarray,
+        dates: list[date],
+        exog: np.ndarray | None = None,
+    ) -> ARIMAXForecaster:
+        """Fit SARIMAX with optional exogenous regressors.
+
+        Args:
+            values: 1-D array of endogenous observations (HPI values).
+            dates:  Corresponding dates (same length as *values*).
+            exog:   Optional 2-D array of shape ``(len(values), n_exog)``.
+                    Columns must be aligned to *values* by date.
+
+        Returns:
+            Self (fitted).
+        """
+        if not _HAS_STATSMODELS:
+            raise ImportError("statsmodels is required for ARIMAXForecaster")
+
+        from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+        if exog is not None:
+            exog = np.asarray(exog, dtype=float)
+            if exog.ndim == 1:
+                exog = exog.reshape(-1, 1)
+            self._last_exog_row = exog[-1:].copy()
+        else:
+            self._last_exog_row = None
+
+        order, seasonal_order = self.order, self.seasonal_order
+        if self.auto_order:
+            # Auto-select on endogenous only (fast); then re-fit with exog
+            order, seasonal_order = _aic_grid_search(values)
+
+        self._result = SARIMAX(
+            values,
+            exog=exog,
+            order=order,
+            seasonal_order=seasonal_order,
+            enforce_stationarity=False,
+            enforce_invertibility=False,
+        ).fit(disp=False)
+
+        self._values = values
+        self._dates = dates
+        self.order = order
+        self.seasonal_order = seasonal_order
+
+        logger.info(
+            "ARIMAXForecaster fitted: order=%s seasonal=%s exog=%s AIC=%.1f",
+            order,
+            seasonal_order,
+            self.exog_names or "(none)",
+            self._result.aic,
+        )
+        return self
+
+    def forecast(  # type: ignore[override]
+        self,
+        steps: int,
+        alpha: float = 0.05,
+        future_exog: np.ndarray | None = None,
+    ) -> ForecastResult:
+        """Forecast *steps* periods ahead.
+
+        Args:
+            steps:       Number of monthly periods to forecast.
+            alpha:       Significance level (0.05 = 95% PI).
+            future_exog: Array of shape ``(steps, n_exog)`` with future
+                         exogenous values.  If ``None`` and the model was
+                         fitted with exog, the last observed row is repeated
+                         (flat-forward assumption).
+
+        Returns:
+            :class:`ForecastResult` with ``method="arimax"``.
+        """
+        if self._result is None or self._dates is None:
+            raise RuntimeError("Call fit() before forecast()")
+
+        if future_exog is None and self._last_exog_row is not None:
+            # Flat-forward: repeat last observed exog value
+            future_exog = np.repeat(self._last_exog_row, steps, axis=0)
+
+        if future_exog is not None:
+            future_exog = np.asarray(future_exog, dtype=float)
+            if future_exog.ndim == 1:
+                future_exog = future_exog.reshape(-1, 1)
+
+        pred = self._result.get_forecast(steps=steps, exog=future_exog)
+        point = np.asarray(pred.predicted_mean, dtype=float)
+
+        ci = np.asarray(pred.conf_int(alpha=alpha))
+        lower = ci[:, 0].astype(float)
+        upper = ci[:, 1].astype(float)
+
+        return ForecastResult(
+            dates=_monthly_dates(self._dates[-1], steps),
+            point=point,
+            lower=lower,
+            upper=upper,
+            alpha=alpha,
+            method=self.name,
+            metadata={
+                "order": self.order,
+                "seasonal_order": self.seasonal_order,
+                "aic": float(self._result.aic),
+                "exog_names": self.exog_names,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

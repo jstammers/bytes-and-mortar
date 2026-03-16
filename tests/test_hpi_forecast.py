@@ -358,3 +358,61 @@ class TestEnsembleWithAllForecasters:
         f.forecast(6)  # triggers weight computation via _compute_weights
         weights = f._compute_weights([c.forecast(6) for c in f._fitted])
         assert pytest.approx(sum(weights), abs=1e-9) == 1.0
+
+
+@statsmodels_missing
+class TestARIMAXForecaster:
+    def test_fit_and_forecast_no_exog(self) -> None:
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        values, dates = _synthetic_hpi(60)
+        f = ARIMAXForecaster()
+        result = f.fit(values, dates).forecast(6)
+        assert isinstance(result, ForecastResult)
+        assert result.horizon == 6
+        assert result.method == "arimax"
+
+    def test_fit_and_forecast_with_exog(self) -> None:
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        values, dates = _synthetic_hpi(60)
+        rng = np.random.default_rng(1)
+        exog = rng.normal(0.5, 0.1, size=(60, 1))
+        future_exog = rng.normal(0.5, 0.1, size=(12, 1))
+        f = ARIMAXForecaster(exog_names=["base_rate"])
+        result = f.fit(values, dates, exog=exog).forecast(12, future_exog=future_exog)
+        assert result.horizon == 12
+        assert result.metadata["exog_names"] == ["base_rate"]
+
+    def test_flat_forward_when_future_exog_missing(self) -> None:
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        values, dates = _synthetic_hpi(60)
+        exog = np.ones((60, 1)) * 0.75
+        f = ARIMAXForecaster()
+        f.fit(values, dates, exog=exog)
+        # No future_exog provided: should use flat-forward of last observed row
+        result = f.forecast(6)
+        assert result.horizon == 6
+
+    def test_forecast_before_fit_raises(self) -> None:
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        with pytest.raises(RuntimeError, match="fit"):
+            ARIMAXForecaster().forecast(6)
+
+    def test_aic_in_metadata(self) -> None:
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        values, dates = _synthetic_hpi(60)
+        result = ARIMAXForecaster().fit(values, dates).forecast(6)
+        assert "aic" in result.metadata
+        assert np.isfinite(result.metadata["aic"])
+
+    def test_pi_bounds_ordered(self) -> None:
+        from src.models.hpi_forecast import ARIMAXForecaster
+
+        values, dates = _synthetic_hpi(60)
+        result = ARIMAXForecaster().fit(values, dates).forecast(12)
+        assert np.all(result.lower <= result.point)
+        assert np.all(result.point <= result.upper)

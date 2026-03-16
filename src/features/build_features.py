@@ -26,6 +26,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+import polars as pl
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -34,6 +35,8 @@ from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -161,6 +164,77 @@ class FeatureConfig:
             "log_transform_target": str(self.log_transform_target),
             "derived_features": str(self.derived_features),
         }
+
+
+# ---------------------------------------------------------------------------
+# HPI join
+# ---------------------------------------------------------------------------
+
+
+def join_hpi_to_sales(
+    sales: pl.LazyFrame,
+    hpi_path: Path,
+) -> pl.LazyFrame:
+    """Left-join regional HPI data onto a sales LazyFrame.
+
+    Joins on ``district == regionname`` (case-insensitive, both uppercased)
+    and ``year == year``, ``month == month``.  Only columns not already
+    present in *sales* are added from the HPI parquet, so the function is
+    safe to call even when the sales parquet was built with HPI enrichment.
+
+    The HPI parquet is expected to contain at least:
+    - ``regionname`` (or ``region_name``) — area/district name
+    - ``year``, ``month`` — derived from the HPI date column
+    - ``averageprice``, ``index``, etc. — price/index columns
+
+    Args:
+        sales: LazyFrame of property transactions (must have ``district``,
+            ``year``, ``month`` columns).
+        hpi_path: Path to the ``uk_hpi_regional.parquet`` file.
+
+    Returns:
+        LazyFrame with HPI columns appended (left join — rows without a
+        matching HPI region retain null values for HPI columns).
+    """
+    if not hpi_path.exists():
+        logger.warning(
+            "HPI regional parquet not found at %s; skipping join. "
+            "Run the pipeline with --hpi data to generate it.",
+            hpi_path,
+        )
+        return sales
+
+    hpi_lf = pl.scan_parquet(hpi_path)
+    hpi_cols = hpi_lf.collect_schema().names()
+    sales_cols = sales.collect_schema().names()
+
+    region_col = next((c for c in ["regionname", "region_name"] if c in hpi_cols), None)
+    if region_col is None or "year" not in hpi_cols or "month" not in hpi_cols:
+        logger.warning("HPI parquet missing required columns (regionname, year, month); skipping.")
+        return sales
+
+    if "district" not in sales_cols or "year" not in sales_cols or "month" not in sales_cols:
+        logger.warning("Sales LazyFrame missing district/year/month; skipping HPI join.")
+        return sales
+
+    # Normalise region name to uppercase for case-insensitive matching.
+    hpi_lf = hpi_lf.with_columns(pl.col(region_col).str.to_uppercase().alias("_hpi_region"))
+    sales = sales.with_columns(pl.col("district").str.to_uppercase())
+
+    # Drop HPI columns already present in sales to avoid duplicates.
+    hpi_add_cols = [c for c in hpi_cols if c not in sales_cols and c not in (region_col,)]
+    hpi_add_cols = [c for c in hpi_add_cols if c not in ("year", "month")]
+    select_hpi = ["_hpi_region", "year", "month", *hpi_add_cols]
+    hpi_lf = hpi_lf.select(select_hpi)
+
+    enriched = sales.join(
+        hpi_lf,
+        left_on=["district", "year", "month"],
+        right_on=["_hpi_region", "year", "month"],
+        how="left",
+    )
+    logger.info("HPI join plan built (district + year + month); adds %d columns", len(hpi_add_cols))
+    return enriched
 
 
 # ---------------------------------------------------------------------------
