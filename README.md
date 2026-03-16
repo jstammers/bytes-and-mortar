@@ -79,7 +79,20 @@ uv run bytes-and-mortar train run --model-type linear
 uv run bytes-and-mortar train run --nrows 1000
 ```
 
-### 3. Explore results in MLflow
+### 3. Investigate model errors
+
+```bash
+# Run SHAP, imputation bias, calibration, regional, and permutation importance analyses
+uv run bytes-and-mortar train investigate
+
+# Also compare a second run with derived features (log_floor_area, floor_area_per_room, etc.)
+uv run bytes-and-mortar train investigate --derived-features
+
+# Higher-fidelity SHAP (more rows) with production-grade budget
+uv run bytes-and-mortar train investigate --n-shap-samples 5000 --budget 1.0
+```
+
+### 4. Explore results in MLflow
 
 ```bash
 just mlflow-ui
@@ -96,6 +109,8 @@ just run --year 2024            # Run full pipeline
 just train                      # Train with defaults
 just mlflow-ui                  # Launch MLflow experiment browser
 ```
+
+For model investigation and explainability, see [docs/modelling.md — Model Investigation](docs/modelling.md#model-investigation-and-explainability).
 
 ## Development
 
@@ -124,11 +139,13 @@ bytes-and-mortar/
 │   │       ├── epc.py
 │   │       └── uk_hpi.py
 │   ├── features/
-│   │   └── build_features.py       # FeatureConfig, pipeline builder, MedianByGroupBaseline
+│   │   ├── build_features.py       # FeatureConfig, pipeline builder, MedianByGroupBaseline
+│   │   └── derived.py              # DerivedFeatureTransformer (log_floor_area, etc.)
 │   └── models/
 │       ├── config.py               # Experiment, PerpetualConfig, ModelType dataclasses
 │       ├── cv.py                   # Time-series CV utilities (available for analysis)
 │       ├── evaluate.py             # RegressionMetrics, compute_metrics
+│       ├── investigate.py          # SHAP, imputation bias, calibration, regional analysis
 │       ├── perpetual_model.py      # Perpetual GBM pipeline (primary model)
 │       ├── linear.py               # RidgeCV pipeline
 │       ├── registry.py             # MLflow tracking and model registry helpers
@@ -137,10 +154,12 @@ bytes-and-mortar/
 │   └── pymc_property_price.py      # Bayesian hierarchical model (marimo notebook)
 ├── tests/
 │   ├── features/
-│   │   └── test_build_features.py
+│   │   ├── test_build_features.py
+│   │   └── test_derived.py         # DerivedFeatureTransformer tests
 │   ├── models/
 │   │   ├── test_cv.py
 │   │   ├── test_evaluate.py
+│   │   ├── test_investigate.py     # Investigation module tests
 │   │   └── test_train_model.py     # Integration tests with synthetic data
 │   └── test_pipeline.py, ...
 ├── data/
@@ -167,10 +186,11 @@ bytes-and-mortar/
 
 ### Modelling pipeline
 
-1. **Feature engineering** — configurable column selection, missing value handling (drop / impute / passthrough), target encoding for `district`, standard scaling
+1. **Feature engineering** — configurable column selection, optional derived features (`log_floor_area`, `floor_area_per_room`, `energy_rating_numeric`), missing value handling (drop / impute / passthrough), target encoding for `district`, standard scaling
 2. **Temporal split** — hold out one or more calendar years as the final test set
 3. **Fit** — `PerpetualBooster(budget=1.0)` self-tunes tree count; no HPO loop required
 4. **Evaluate** — RMSE, MAE, MAPE, MdAPE, R² compared against a `MedianByGroupBaseline(property_type × district)`
 5. **Log** — all params, metrics, and the fitted model artefact to MLflow; optional push to model registry
+6. **Investigate** (optional) — SHAP feature attribution, imputation bias analysis, reliability diagram, regional MdAPE breakdown, and permutation importance; all logged as MLflow artefacts
 
-See [docs/modelling.md](docs/modelling.md) for the full methodology, model architectures, and extension guide.
+See [docs/modelling.md](docs/modelling.md) for the full methodology, model architectures, investigation guide, and CLI reference.

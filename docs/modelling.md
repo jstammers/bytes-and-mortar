@@ -13,8 +13,10 @@ data/processed/uk_property_sales.parquet
         │
         ▼
   Feature Engineering          src/features/build_features.py
-  ──────────────────
+  ──────────────────           src/features/derived.py
   • Column selection & validation
+  • Optional derived features (log_floor_area, floor_area_per_room,
+    energy_rating_numeric)
   • Missing value handling
   • Ordinal encoding (low-cardinality categoricals)
   • Target encoding (district, ~300 categories)
@@ -44,6 +46,15 @@ data/processed/uk_property_sales.parquet
   • Params, metrics, model artefact per run
   • Optional: push to MLflow model registry
   • Always: save .joblib file to models/
+        │
+        ▼
+  Investigate (optional)        src/models/investigate.py
+  ──────────────────────
+  • SHAP feature attribution via PerpetualBooster.predict_contributions()
+  • Imputation bias — imputed vs complete-case performance split
+  • Calibration — reliability diagram and bias by price decile
+  • Regional performance — MdAPE by county
+  • Permutation importance — noise feature detection
 ```
 
 ---
@@ -72,7 +83,7 @@ All columns are validated against the actual DataFrame schema before training be
 
 ### Missing value strategies
 
-EPC data is only available for ~50–70% of sales (the join is a left join on postcode + address). The three strategies handle this differently:
+EPC data is only available for ~50-70% of sales (the join is a left join on postcode + address). The three strategies handle this differently:
 
 | Strategy | Behaviour | Best for |
 |---|---|---|
@@ -83,6 +94,31 @@ EPC data is only available for ~50–70% of sales (the join is a left join on po
 ```bash
 bytes-and-mortar train run --missing-strategy passthrough
 ```
+
+### Derived features
+
+**File:** `src/features/derived.py`
+
+`DerivedFeatureTransformer` is an optional sklearn-compatible preprocessing step that computes three new numeric columns before the main `ColumnTransformer`:
+
+| Feature | Formula | Rationale |
+|---|---|---|
+| `log_floor_area` | `log1p(total_floor_area)` | Floor area is right-skewed; log transform improves its linear relationship with log-price |
+| `floor_area_per_room` | `total_floor_area / max(rooms, 1)` | Space efficiency (density) — a proxy for property quality independent of absolute size |
+| `energy_rating_numeric` | A=7, B=6, ..., G=1 | Treats EPC letter grade as a continuous ordinal signal rather than a nominal category |
+
+Enable derived features via `FeatureConfig.derived_features=True` or the `--derived-features` CLI flag:
+
+```bash
+# Train with derived features
+bytes-and-mortar train investigate --derived-features
+
+# Or use the Python API
+from src.features.build_features import FeatureConfig
+config = FeatureConfig(derived_features=True)
+```
+
+The transformer is inserted as the first pipeline step; the `ColumnTransformer` then picks up the new columns automatically via `FeatureConfig.effective_numeric_features`.
 
 ### Target encoding for `district`
 
@@ -140,10 +176,10 @@ A PyMC-based Bayesian hierarchical regression explored in a [marimo](https://mar
 ```
 price_i ~ LogNormal(μ_i, σ)
 μ_i  = α[district_i] + β_floor · floor_area_i + β_eff · energy_eff_i
-α[d] ~ Normal(μ_α, σ_α)      ← district-level random intercepts
-μ_α  ~ Normal(log(300k), 1.5) ← global mean log-price prior
-σ_α  ~ HalfNormal(1)          ← between-district variation
-σ    ~ HalfNormal(0.5)         ← within-district noise
+α[d] ~ Normal(μ_α, σ_α)      <- district-level random intercepts
+μ_α  ~ Normal(log(300k), 1.5) <- global mean log-price prior
+σ_α  ~ HalfNormal(1)          <- between-district variation
+σ    ~ HalfNormal(0.5)         <- within-district noise
 ```
 
 **Why a hierarchical model?**
@@ -195,17 +231,130 @@ All metrics are computed in **original GBP price space** (after `expm1` inversio
 
 | Metric | Formula | Interpretation |
 |---|---|---|
-| **RMSE** | √(mean((ŷ − y)²)) | Penalises large errors heavily; sensitive to outliers |
-| **MAE** | mean(\|ŷ − y\|) | Average error in £; interpretable and robust |
-| **MAPE** | mean(\|ŷ − y\| / y) | Scale-independent; useful across price ranges |
-| **MdAPE** | median(\|ŷ − y\| / y) | Robust version of MAPE; less affected by outlier properties |
-| **R²** | 1 − SS_res/SS_tot | Proportion of variance explained |
+| **RMSE** | sqrt(mean((y_hat - y)^2)) | Penalises large errors heavily; sensitive to outliers |
+| **MAE** | mean(\|y_hat - y\|) | Average error in GBP; interpretable and robust |
+| **MAPE** | mean(\|y_hat - y\| / y) | Scale-independent; useful across price ranges |
+| **MdAPE** | median(\|y_hat - y\| / y) | Robust version of MAPE; less affected by outlier properties |
+| **R²** | 1 - SS_res/SS_tot | Proportion of variance explained |
+
+---
+
+## Model Investigation and Explainability
+
+**File:** `src/models/investigate.py`
+
+The `train investigate` command trains a model and then runs a diagnostic suite designed to answer five questions about prediction errors.  All outputs are logged to MLflow under an `investigate/` artefact subfolder and viewable in the MLflow UI.
+
+### Running an investigation
+
+```bash
+# Full investigation with defaults (Perpetual, budget=0.5 for speed)
+bytes-and-mortar train investigate
+
+# Higher-fidelity SHAP analysis with more samples
+bytes-and-mortar train investigate --n-shap-samples 5000 --budget 1.0
+
+# Compare baseline vs a model enriched with derived features
+bytes-and-mortar train investigate --derived-features
+
+# Change the regional breakdown column
+bytes-and-mortar train investigate --region-col county
+```
+
+### 1. SHAP feature attribution
+
+Uses `PerpetualBooster.predict_contributions()` to compute SHAP-style feature attributions without requiring the external `shap` library. Contributions are aligned to the ColumnTransformer output feature names and subsampled (default 2000 rows) for speed.
+
+**Artefacts logged:**
+- `investigate/shap_summary.png` — horizontal bar chart of mean |SHAP value| per feature (descending importance)
+- `investigate/shap_dependence_<feature>.png` — scatter of transformed feature value vs SHAP value for the top-3 most important features
+
+**What to look for:**
+- Features with near-zero mean |SHAP| are contributing little signal and are candidates for removal (cross-reference with permutation importance)
+- A flat dependence plot suggests a feature adds noise; a clear monotone trend confirms genuine predictive value
+- Unexpected patterns (e.g. SHAP values that reverse direction mid-range) can indicate feature interactions or data quality issues
+
+### 2. Imputation bias
+
+Splits the test set into two groups — rows where at least one feature was `NaN` before the pipeline imputed it, and rows that were fully observed — and computes metrics separately.
+
+**Artefact logged:** `investigate/imputation_bias.png`
+
+**What to look for:**
+- If imputed rows have materially higher RMSE or MdAPE than complete-case rows, the median/most-frequent fill is introducing systematic bias
+- A large imputed fraction (>30%) means a significant share of predictions rely on filled values; consider `--missing-strategy drop` for a cleaner comparison
+- Possible remedies: better EPC join coverage, feature-specific imputation strategies, or dropping EPC features with low join rates
+
+### 3. Calibration
+
+Sorts predictions into equal-count bins (default 10) and compares the mean predicted price against the mean actual price in each bin. A well-calibrated model should produce a near-diagonal reliability diagram.
+
+**Artefact logged:** `investigate/calibration.png` (reliability diagram + bias-by-decile bar chart)
+
+**What to look for:**
+- Systematic over-prediction at the top of the price distribution (an upward bow in the reliability diagram) is common when training on right-skewed data
+- Systematic under-prediction at the low end suggests the log-price transformation may not fully correct the skew, or that very cheap properties are under-represented
+- A consistently positive bias across all bins indicates the model is globally overconfident upward — consider checking for target leakage
+
+### 4. Regional performance
+
+Computes RMSE, MAE, MAPE, MdAPE, and R² separately for each region (default: `county`). Regions with fewer than 30 test-set rows are excluded to avoid noisy estimates.
+
+**Artefact logged:** `investigate/regional_performance.png`
+
+**What to look for:**
+- Counties far above the cross-region MdAPE average are underfit — they likely have distinctive price dynamics not captured by the shared model features
+- High-error regions often correlate with sparse training data, unusual property mixes (e.g. rural counties with many large detached houses), or missing EPC coverage
+- Consider adding region-specific features (e.g. interaction terms, or separate models per region) if the spread is large
+
+### 5. Permutation importance
+
+Shuffles each feature column independently and measures the average increase in MSE (log-space). Features with high `importance_mean` are load-bearing; features with `importance_mean ≈ 0` or negative (shuffling *helps*) are potential noise sources.
+
+**Artefact logged:** `investigate/permutation_importance.png`
+
+**What to look for:**
+- Red bars (negative importance) flag features where the model does better without the feature's real signal — strong indicator of noise or overfitting
+- Features with low importance and high correlation to another feature can safely be dropped without accuracy loss
+- Cross-reference with SHAP: a feature with low mean |SHAP| and low permutation importance is a reliable removal candidate
+
+### Python API
+
+```python
+import mlflow
+import numpy as np
+from src.models.investigate import run_investigations
+
+mlflow.set_tracking_uri("sqlite:///mlruns.db")
+mlflow.set_experiment("uk_property_price/investigate")
+
+with mlflow.start_run():
+    summary = run_investigations(
+        pipeline=fitted_pipeline,
+        X_train=X_train,
+        y_train_log=y_train_log,
+        X_test_raw=X_test,      # pre-transform DataFrame — NaNs preserved
+        y_test_log=y_test_log,
+        feature_cols=feature_config.all_features,
+        region_col="county",
+        n_calibration_bins=10,
+        n_shap_samples=2000,
+        n_perm_repeats=5,
+    )
+
+# Access results programmatically
+print("Worst calibration bias:", max(abs(b.bias) for b in summary.calibration_bins))
+print("Imputed fraction:", summary.imputation_bias.imputed_fraction)
+print("Top feature (SHAP):", summary.shap_feature_names[np.argmax(summary.shap_mean_abs)])
+```
 
 ---
 
 ## MLflow Experiment Tracking
 
 Each `bytes-and-mortar train run` invocation creates a **run** containing all experiment params, test metrics, evaluation plots, and the fitted model artefact.
+
+Each `bytes-and-mortar train investigate` invocation creates one or two runs (a second if `--derived-features` is set) under an `investigate` experiment name, containing the standard test metrics plus all investigation artefacts.
 
 Experiments are organised as `<name>/<model_type>` (e.g. `uk_property_price/perpetual`) so different architectures can be filtered and compared in the MLflow UI.
 
@@ -239,28 +388,77 @@ predictions = pipeline.predict(X_new)
 
 ## CLI Reference
 
+### `train run` — train and evaluate a model
+
 ```
 bytes-and-mortar train run [OPTIONS]
 
 Options:
-  -m, --model-type     [perpetual|linear]  Model architecture (default: perpetual)
-  --budget             FLOAT               Perpetual budget — higher = more accurate,
-                                           slower (default: 1.0)
-  --data-path          PATH                Path to processed parquet (default: auto)
-  --nrows              INT                 Limit rows loaded for development
-  --test-years         TEXT                Comma-separated holdout years (default: 2024)
-  --missing-strategy   [impute|drop|       Missing value handling
-                        passthrough]       (default: impute)
-  --log-transform /    --no-log-transform  Log1p-transform price target (default: on)
-  --register /         --no-register       Register in MLflow registry (default: off)
-  --mlflow-uri         TEXT                MLflow tracking URI
-  --numeric-features   TEXT                Comma-separated numeric feature columns
-  --categorical-features TEXT              Comma-separated categorical feature columns
+  -m, --model-type       [perpetual|linear]   Model architecture (default: perpetual)
+  --budget               FLOAT                Perpetual budget (default: 1.0)
+  --data-path            PATH                 Path to processed parquet (default: auto)
+  --nrows                INT                  Limit rows loaded for development
+  --test-years           TEXT                 Comma-separated holdout years (default: 2024)
+  --missing-strategy     [impute|drop|         Missing value handling (default: impute)
+                          passthrough]
+  --log-transform /      --no-log-transform   Log1p-transform price target (default: on)
+  --register /           --no-register        Register in MLflow registry (default: off)
+  --mlflow-uri           TEXT                 MLflow tracking URI
+  --numeric-features     TEXT                 Comma-separated numeric feature columns
+  --categorical-features TEXT                 Comma-separated categorical feature columns
+```
+
+### `train investigate` — train then run diagnostic investigations
+
+```
+bytes-and-mortar train investigate [OPTIONS]
+
+Options:
+  -m, --model-type        [perpetual|linear]   Model architecture (default: perpetual)
+  --budget                FLOAT                Perpetual budget (default: 0.5)
+  --data-path             PATH                 Path to processed parquet (default: auto)
+  --nrows                 INT                  Limit rows loaded
+  --test-years            TEXT                 Comma-separated holdout years (default: 2024)
+  --missing-strategy      [impute|drop|         Missing value handling (default: impute)
+                           passthrough]
+  --mlflow-uri            TEXT                 MLflow tracking URI
+  --region-col            TEXT                 Column for regional breakdown (default: county)
+  --n-shap-samples        INT                  Rows subsampled for SHAP (default: 2000)
+  --n-perm-repeats        INT                  Permutation importance repeats (default: 5)
+  --derived-features /    --no-derived-features Also run a second experiment with
+                                               log_floor_area, floor_area_per_room,
+                                               energy_rating_numeric added (default: off)
+```
+
+**MLflow artefacts produced by `train investigate`:**
+
+| Artefact | Contents |
+|---|---|
+| `investigate/shap_summary.png` | Mean \|SHAP\| per feature (bar chart) |
+| `investigate/shap_dependence_<feat>.png` | SHAP dependence for top-3 features |
+| `investigate/imputation_bias.png` | MdAPE/RMSE split: imputed vs complete rows |
+| `investigate/calibration.png` | Reliability diagram + bias by price decile |
+| `investigate/regional_performance.png` | MdAPE by county (top 30 shown) |
+| `investigate/permutation_importance.png` | MSE increase when each feature is shuffled |
+
+### `train predict` — generate predictions from a registered model
+
+```
+bytes-and-mortar train predict INPUT_PATH [OPTIONS]
+
+Arguments:
+  INPUT_PATH    Path to parquet or CSV file with feature columns
+
+Options:
+  -o, --output  PATH    Output CSV path (default: predictions.csv)
+  --model-name  TEXT    Registered MLflow model name (default: uk_property_price)
 ```
 
 ---
 
 ## Python API
+
+### Training
 
 ```python
 from src.models.config import Experiment, PerpetualConfig, ModelType
@@ -285,6 +483,29 @@ print(metrics.summary())
 
 # Later: load best model and predict
 predictions = predict(input_df, model_name="uk_property_price")
+```
+
+### Training with derived features
+
+```python
+from src.features.build_features import FeatureConfig, MissingStrategy
+
+config = FeatureConfig(
+    missing_strategy=MissingStrategy.impute,
+    derived_features=True,  # adds log_floor_area, floor_area_per_room, energy_rating_numeric
+)
+# config.all_features   -> original raw column names (for loading / validation)
+# config.effective_numeric_features -> numeric columns including the three derived ones
+```
+
+### Using `DerivedFeatureTransformer` directly
+
+```python
+from src.features.derived import DerivedFeatureTransformer
+
+transformer = DerivedFeatureTransformer()
+X_enriched = transformer.fit_transform(X_raw)
+# New columns: log_floor_area, floor_area_per_room, energy_rating_numeric
 ```
 
 ---
