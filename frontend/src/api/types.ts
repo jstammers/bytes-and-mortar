@@ -98,3 +98,30 @@ export interface ValuationSensitivityResponse {
   base_prediction: ValuationPrediction
   sensitivities: SensitivityResult[]
 }
+
+export interface HPIForecastRequest {
+  region: string
+  method: string
+  steps: number
+  alpha: number
+}
+
+export interface HPIHistoricalPoint {
+  date: string
+  value: number
+}
+
+export interface HPIForecastPoint {
+  date: string
+  point: number
+  lower: number
+  upper: number
+}
+
+export interface HPIForecastResponse {
+  region: string
+  method: string
+  alpha: number
+  historical: HPIHistoricalPoint[]
+  forecast: HPIForecastPoint[]
+}

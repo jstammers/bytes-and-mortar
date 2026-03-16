@@ -1,5 +1,7 @@
 import type {
   AreaComparisonData,
+  HPIForecastRequest,
+  HPIForecastResponse,
   PropertyDetail,
   PropertyHistory,
   PropertySearchResult,
@@ -58,5 +60,17 @@ export async function getValuationSensitivity(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
+  })
+}
+
+export async function getHPIForecastRegions(): Promise<string[]> {
+  return fetchJson<string[]>('/api/hpi-forecast/regions')
+}
+
+export async function getHPIForecast(request: HPIForecastRequest): Promise<HPIForecastResponse> {
+  return fetchJson<HPIForecastResponse>('/api/hpi-forecast', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
   })
 }

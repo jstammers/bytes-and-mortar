@@ -19,6 +19,16 @@ export default function Navbar() {
             >
               Valuation Explorer
             </NavLink>
+            <NavLink
+              to="/hpi-forecast"
+              className={({ isActive }) =>
+                `text-sm font-medium transition-colors ${
+                  isActive ? 'text-white underline underline-offset-4' : 'text-slate-300 hover:text-white'
+                }`
+              }
+            >
+              HPI Forecast
+            </NavLink>
           </div>
         </div>
       </div>

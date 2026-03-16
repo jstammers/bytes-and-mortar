@@ -336,3 +336,34 @@ class SalesDataService(PropertyDataService):
 
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
         return results[:n]
+
+    def get_hpi_regions(self) -> list[str]:
+        """Return distinct district names present in the parquet."""
+        if "district" not in self._schema:
+            return []
+        regions = (
+            self._scan().select("district").unique().collect()["district"].drop_nulls().to_list()
+        )
+        return sorted(str(r).title() for r in regions)
+
+    def get_hpi_series(self, region: str) -> tuple[list[str], list[float]]:
+        """Return monthly HPI (average price) series for *region*."""
+        if "averageprice_hpi" not in self._schema:
+            return [], []
+
+        df = (
+            self._scan()
+            .filter(pl.col("district") == region.upper())
+            .filter(pl.col("averageprice_hpi").is_not_null())
+            .select(["year", "month", "averageprice_hpi"])
+            .unique(subset=["year", "month"])
+            .sort(["year", "month"])
+            .collect()
+        )
+
+        if df.is_empty():
+            return [], []
+
+        dates = [f"{int(row['year'])}-{int(row['month']):02d}-01" for row in df.to_dicts()]
+        values = df["averageprice_hpi"].to_list()
+        return dates, [float(v) for v in values]

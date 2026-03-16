@@ -100,3 +100,30 @@ class SensitivityResult(BaseModel):
 class ValuationSensitivityResponse(BaseModel):
     base_prediction: ValuationPrediction
     sensitivities: list[SensitivityResult]
+
+
+class HPIForecastRequest(BaseModel):
+    region: str
+    method: str = "ensemble"  # "ets" | "sarima" | "trend" | "ensemble"
+    steps: int = 12  # 1-60
+    alpha: float = 0.05  # significance level; 1-alpha = PI coverage
+
+
+class HPIHistoricalPoint(BaseModel):
+    date: str
+    value: float
+
+
+class HPIForecastPoint(BaseModel):
+    date: str
+    point: float
+    lower: float
+    upper: float
+
+
+class HPIForecastResponse(BaseModel):
+    region: str
+    method: str
+    alpha: float
+    historical: list[HPIHistoricalPoint]
+    forecast: list[HPIForecastPoint]
