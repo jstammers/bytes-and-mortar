@@ -59,6 +59,10 @@ FEATURE_SCHEMA: dict[str, Literal["numeric", "categorical", "target_encode"]] = 
     "number_habitable_rooms": "numeric",
     "averageprice": "numeric",
     "index": "numeric",
+    # Derived features (added by DerivedFeatureTransformer when derived_features=True)
+    "log_floor_area": "numeric",
+    "floor_area_per_room": "numeric",
+    "energy_rating_numeric": "numeric",
 }
 
 DEFAULT_NUMERIC_FEATURES: list[str] = [
@@ -117,11 +121,35 @@ class FeatureConfig:
     )
     missing_strategy: MissingStrategy = MissingStrategy.impute
     log_transform_target: bool = True
+    derived_features: bool = False
+    """If ``True``, prepend a :class:`~src.features.derived.DerivedFeatureTransformer`
+    step that adds ``log_floor_area``, ``floor_area_per_room``, and
+    ``energy_rating_numeric`` before the main column transformer."""
 
     @property
     def all_features(self) -> list[str]:
-        """Ordered union of all feature column names."""
+        """Ordered union of all feature column names (original columns only).
+
+        Does not include derived feature column names — those are computed by
+        :class:`~src.features.derived.DerivedFeatureTransformer` inside the
+        pipeline and are never present in the raw DataFrame.
+        """
         return self.numeric_features + self.categorical_features + self.target_encode_features
+
+    @property
+    def effective_numeric_features(self) -> list[str]:
+        """Numeric features passed to the ColumnTransformer.
+
+        When ``derived_features=True``, appends the three derived column names
+        (:data:`~src.features.derived.DERIVED_NUMERIC_FEATURES`) so the
+        ColumnTransformer processes them after :class:`DerivedFeatureTransformer`
+        has added them to the DataFrame.
+        """
+        if self.derived_features:
+            from src.features.derived import DERIVED_NUMERIC_FEATURES
+
+            return self.numeric_features + DERIVED_NUMERIC_FEATURES
+        return self.numeric_features
 
     def to_dict(self) -> dict[str, str | bool]:
         """Flat dict suitable for ``mlflow.log_params()``."""
@@ -131,6 +159,7 @@ class FeatureConfig:
             "target_encode_features": ",".join(self.target_encode_features),
             "missing_strategy": self.missing_strategy.value,
             "log_transform_target": str(self.log_transform_target),
+            "derived_features": str(self.derived_features),
         }
 
 
@@ -248,8 +277,8 @@ def build_feature_pipeline(config: FeatureConfig) -> Pipeline:
     remainder = "passthrough" if config.missing_strategy == MissingStrategy.passthrough else "drop"
 
     transformers: list[tuple[str, object, list[str]]] = []
-    if config.numeric_features:
-        transformers.append(("numeric", numeric_pipe, config.numeric_features))
+    if config.effective_numeric_features:
+        transformers.append(("numeric", numeric_pipe, config.effective_numeric_features))
     if config.categorical_features:
         transformers.append(("categorical", categorical_pipe, config.categorical_features))
     if config.target_encode_features:
@@ -260,6 +289,16 @@ def build_feature_pipeline(config: FeatureConfig) -> Pipeline:
         remainder=remainder,
         verbose_feature_names_out=False,
     )
+
+    if config.derived_features:
+        from src.features.derived import DerivedFeatureTransformer
+
+        return Pipeline(
+            [
+                ("derive", DerivedFeatureTransformer()),
+                ("features", column_transformer),
+            ]
+        )
 
     return Pipeline([("features", column_transformer)])
 

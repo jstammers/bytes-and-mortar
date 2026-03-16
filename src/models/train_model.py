@@ -238,8 +238,8 @@ def train(experiment: Experiment) -> tuple[object, RegressionMetrics]:
         train_df_pd = train_df_pd.sort_values("date_of_transfer")
 
         feature_cols = experiment.feature_config.all_features
-        X_train = train_df_pd[feature_cols]
-        X_test = test_df_pd[feature_cols]
+        X_train = train_df_pd[feature_cols]  # noqa: N806
+        X_test = test_df_pd[feature_cols]  # noqa: N806
         y_train_log = np.log1p(train_df_pd["price"].to_numpy().astype(float))
         y_test_log = np.log1p(test_df_pd["price"].to_numpy().astype(float))
 
@@ -428,6 +428,187 @@ def train_command(
     )
 
     train(experiment)
+
+
+@train_app.command("investigate")
+def investigate_command(
+    model_type: Annotated[
+        ModelType,
+        typer.Option("--model-type", "-m", help="Model architecture to train."),
+    ] = ModelType.perpetual,
+    budget: Annotated[
+        float,
+        typer.Option("--budget", help="Perpetual budget parameter."),
+    ] = 0.5,
+    data_path: Annotated[
+        Path | None,
+        typer.Option(help="Path to processed parquet file."),
+    ] = None,
+    nrows: Annotated[
+        int | None,
+        typer.Option(help="Limit rows loaded (useful for quicker investigations)."),
+    ] = None,
+    test_years: Annotated[
+        str,
+        typer.Option(help="Comma-separated years to hold out as test set."),
+    ] = "2024",
+    missing_strategy: Annotated[
+        MissingStrategy,
+        typer.Option("--missing-strategy", help="How to handle missing feature values."),
+    ] = MissingStrategy.impute,
+    mlflow_uri: Annotated[
+        str | None,
+        typer.Option("--mlflow-uri", help="MLflow tracking URI."),
+    ] = None,
+    region_col: Annotated[
+        str,
+        typer.Option(help="Column for regional performance breakdown."),
+    ] = "county",
+    n_shap_samples: Annotated[
+        int,
+        typer.Option(help="Max rows to use for SHAP computation."),
+    ] = 2000,
+    n_perm_repeats: Annotated[
+        int,
+        typer.Option(help="Permutation importance shuffle repetitions per feature."),
+    ] = 5,
+    derived_features: Annotated[
+        bool,
+        typer.Option(
+            "--derived-features/--no-derived-features",
+            help="Also run a comparison experiment with engineered derived features "
+            "(log_floor_area, floor_area_per_room, energy_rating_numeric).",
+        ),
+    ] = False,
+) -> None:
+    """Train a model then run explainability investigations.
+
+    Produces the following artefacts in MLflow under the ``investigate/`` folder:
+
+    \b
+    - shap_summary.png            — global SHAP feature importance bar chart
+    - shap_dependence_<feat>.png  — SHAP dependence for top-3 features
+    - imputation_bias.png         — MdAPE / RMSE split by imputed vs complete rows
+    - calibration.png             — reliability diagram + bias-by-decile chart
+    - regional_performance.png    — MdAPE by county
+    - permutation_importance.png  — MSE increase when each feature is shuffled
+
+    When ``--derived-features`` is set a second MLflow run is created with
+    ``log_floor_area``, ``floor_area_per_room``, and ``energy_rating_numeric``
+    added to the feature set, enabling direct metric comparison.
+    """
+    from src.data.config import PROCESSED_DATA_PATH
+
+    parsed_test_years = [int(y.strip()) for y in test_years.split(",")]
+    resolved_data_path = data_path or PROCESSED_DATA_PATH
+    resolved_mlflow_uri = mlflow_uri or Experiment().mlflow_tracking_uri
+
+    def _run_one(feat_config: FeatureConfig, run_suffix: str = "") -> None:
+        """Train + investigate a single feature configuration."""
+        experiment = Experiment(
+            name=f"uk_property_price_investigate{run_suffix}",
+            model_type=model_type,
+            feature_config=feat_config,
+            perpetual_config=PerpetualConfig(budget=budget),
+            data_path=resolved_data_path,
+            nrows=nrows,
+            test_years=parsed_test_years,
+            register_model=False,
+            mlflow_tracking_uri=resolved_mlflow_uri,
+        )
+
+        import mlflow
+
+        from src.models.investigate import run_investigations
+
+        setup_mlflow(experiment)
+
+        run_name = f"{model_type}_investigate{run_suffix}"
+        with mlflow.start_run(run_name=run_name):
+            log_params_and_tags(experiment)
+
+            # ---- Load + split (mirrors train()) ----
+            df = _load_data(experiment)
+            df_pd = df.to_pandas()
+            validate_features(df_pd, feat_config)
+
+            df = pl.from_pandas(df_pd)
+            df = _apply_missing_strategy(df, feat_config)
+            df_pd = df.to_pandas()
+
+            from src.models.cv import temporal_train_test_split
+
+            train_df, test_df = temporal_train_test_split(
+                df_pd,
+                test_years=experiment.test_years,
+                stratify_col=experiment.stratify_by,
+            )
+            train_df = train_df.sort_values("date_of_transfer")
+
+            feature_cols = feat_config.all_features
+            X_train = train_df[feature_cols]  # noqa: N806
+            X_test = test_df[feature_cols]  # noqa: N806
+            y_train_log = np.log1p(train_df["price"].to_numpy().astype(float))
+            y_test_log = np.log1p(test_df["price"].to_numpy().astype(float))
+
+            mlflow.log_metrics({"n_train": len(X_train), "n_test": len(X_test)})
+
+            # ---- Fit ----
+            pipeline = _build_pipeline(experiment)
+            logger.info("Fitting %s model (investigate mode)…", model_type)
+            pipeline.fit(X_train, y_train_log)
+
+            # ---- Standard test metrics ----
+            y_pred_log = pipeline.predict(X_test)
+            from src.models.evaluate import evaluate_on_test
+
+            test_metrics_dict = evaluate_on_test(
+                model_pred=y_pred_log,
+                baseline_pred=y_pred_log,  # no separate baseline needed here
+                y_true=y_test_log,
+                log_transformed=True,
+            )
+            test_metrics = test_metrics_dict["model"]
+            mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.to_dict().items()})
+
+            typer.echo(
+                f"\n{'─' * 60}\n"
+                f"  Run:    investigate{run_suffix}\n"
+                f"  Test:   {test_metrics.summary()}\n"
+                f"{'─' * 60}"
+            )
+
+            # ---- Investigations ----
+            run_investigations(
+                pipeline=pipeline,
+                X_train=X_train,
+                y_train_log=y_train_log,
+                X_test_raw=X_test,
+                y_test_log=y_test_log,
+                feature_cols=feature_cols,
+                region_col=region_col,
+                n_shap_samples=n_shap_samples,
+                n_perm_repeats=n_perm_repeats,
+            )
+
+    # Run baseline investigation
+    base_config = FeatureConfig(missing_strategy=missing_strategy)
+    _run_one(base_config, run_suffix="")
+
+    # Optionally run derived-feature comparison
+    if derived_features:
+        typer.echo("\nRunning derived-features comparison…")
+
+        derived_config = FeatureConfig(
+            numeric_features=list(FeatureConfig().numeric_features),
+            categorical_features=list(FeatureConfig().categorical_features),
+            target_encode_features=list(FeatureConfig().target_encode_features),
+            missing_strategy=missing_strategy,
+            derived_features=True,
+        )
+        _run_one(derived_config, run_suffix="_derived")
+
+    typer.echo("\nInvestigation complete — view artefacts with: just mlflow-ui")
 
 
 @train_app.command("predict")
