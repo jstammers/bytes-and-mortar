@@ -32,6 +32,7 @@ ml = [
     "mlflow>=2.13",
     "numpy>=1.26",
     "matplotlib>=3.8",
+    "statsmodels>=0.14",
 ]
 notebooks = [
     "marimo>=0.6",

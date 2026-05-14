@@ -388,6 +388,16 @@ class MockDataService:
             "hpi_average_prices": [h["average_price"] for h in hpi],
         }
 
+    def get_hpi_regions(self) -> list[str]:
+        return list(self._hpi_series.keys())
+
+    def get_hpi_series(self, region: str) -> tuple[list[str], list[float]]:
+        series = self._hpi_series.get(region, [])
+        return (
+            [entry["date"] for entry in series],
+            [entry["average_price"] for entry in series],
+        )
+
     def get_similar_properties(self, property_id: str, n: int = 8) -> list[dict]:
         prop = self._properties.get(property_id)
         if not prop:

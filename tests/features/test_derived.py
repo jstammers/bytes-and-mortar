@@ -12,7 +12,6 @@ from src.features.derived import (
     DerivedFeatureTransformer,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -86,9 +85,7 @@ class TestDerivedFeatureTransformer:
     def test_floor_area_per_room_formula(self, transformer, sample_df):
         out = transformer.fit_transform(sample_df)
         expected = sample_df["total_floor_area"] / sample_df["number_habitable_rooms"].clip(lower=1)
-        np.testing.assert_allclose(
-            out["floor_area_per_room"].values, expected.values, rtol=1e-6
-        )
+        np.testing.assert_allclose(out["floor_area_per_room"].values, expected.values, rtol=1e-6)
 
     def test_energy_rating_numeric_values(self, transformer, sample_df):
         out = transformer.fit_transform(sample_df)
@@ -163,7 +160,11 @@ class TestDerivedFeaturesInPipeline:
         """Pipeline with derived_features=True should include a 'derive' step."""
         from sklearn.pipeline import Pipeline
 
-        from src.features.build_features import FeatureConfig, MissingStrategy, build_feature_pipeline
+        from src.features.build_features import (
+            FeatureConfig,
+            MissingStrategy,
+            build_feature_pipeline,
+        )
 
         config = FeatureConfig(
             numeric_features=["total_floor_area", "number_habitable_rooms"],
@@ -180,7 +181,11 @@ class TestDerivedFeaturesInPipeline:
         """Pipeline with derived=True should transform without errors."""
         import numpy as np
 
-        from src.features.build_features import FeatureConfig, MissingStrategy, build_feature_pipeline
+        from src.features.build_features import (
+            FeatureConfig,
+            MissingStrategy,
+            build_feature_pipeline,
+        )
 
         config = FeatureConfig(
             numeric_features=["total_floor_area", "number_habitable_rooms"],

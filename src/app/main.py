@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.app.routers import properties, valuation
+from src.app.routers import hpi_forecast, properties, valuation
 from src.app.services.mock_data import MockDataService
 from src.app.services.sales_data import SalesDataService
 from src.data.config import PROCESSED_DATA_PATH
@@ -61,7 +61,7 @@ app = FastAPI(
 )
 
 app.add_middleware(
-    CORSMiddleware,  # ty:ignore[invalid-argument-type]
+    CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -70,6 +70,7 @@ app.add_middleware(
 
 app.include_router(properties.router, prefix="/api/properties", tags=["properties"])
 app.include_router(valuation.router, prefix="/api/valuation", tags=["valuation"])
+app.include_router(hpi_forecast.router, prefix="/api/hpi-forecast", tags=["hpi-forecast"])
 
 
 @app.get("/")

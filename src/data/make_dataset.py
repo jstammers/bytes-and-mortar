@@ -35,8 +35,10 @@ from dotenv import find_dotenv, load_dotenv
 
 from src.data.config import PROCESSED_DIR, RAW_DIR
 from src.data.pipeline import run_pipeline
+from src.data.sources.bank_of_england import BankOfEnglandSeries
 from src.data.sources.epc import EPCData
 from src.data.sources.land_registry import LandRegistryPricePaid
+from src.data.sources.ons import ONSTimeSeries
 from src.data.sources.uk_hpi import UKHousePriceIndex
 from src.models.train_model import train_app
 
@@ -222,6 +224,42 @@ def run(
         f"Pipeline complete: {len(df)} rows, {len(df.columns)} columns "
         f"saved to {out_dir / output_name}.{fmt.value}"
     )
+
+
+@app.command()
+def download_boe(
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Override raw data output directory.")
+    ] = None,
+) -> None:
+    """Download Bank of England macro-economic series (base rate, mortgage rate, approvals).
+
+    Series downloaded: IUDBEDR (base rate), IUMBV42 (mortgage rate), LPMVTVB (approvals).
+    No registration required — data is freely available under OGL v3.0.
+    """
+    logger = logging.getLogger(__name__)
+    raw = output_dir if output_dir else RAW_DIR
+    source = BankOfEnglandSeries(raw_dir=raw)
+    filepath = source.download()
+    logger.info("Downloaded Bank of England series to %s", filepath)
+
+
+@app.command()
+def download_ons(
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Override raw data output directory.")
+    ] = None,
+) -> None:
+    """Download ONS macro-economic time series (AWE, unemployment, GDP).
+
+    Series downloaded: KAB9 (Average Weekly Earnings), MGSX (unemployment rate),
+    IHYQ (GDP growth). No API key required.
+    """
+    logger = logging.getLogger(__name__)
+    raw = output_dir if output_dir else RAW_DIR
+    source = ONSTimeSeries(raw_dir=raw)
+    filepath = source.download()
+    logger.info("Downloaded ONS series to %s", filepath)
 
 
 @app.callback()

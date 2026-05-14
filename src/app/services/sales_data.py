@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from src.app.services.base import PropertyDataService
-from src.data.config import DURATION_MAP, PROPERTY_TYPE_MAP
+from src.data.config import DURATION_MAP, HPI_REGIONAL_DATA_PATH, PROPERTY_TYPE_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def _row_to_prop(row: dict) -> dict:
 
     def _int(val: object) -> int | None:
         try:
-            return int(val)  # type: ignore[arg-type]
+            return int(val)  # type: ignore
         except (TypeError, ValueError):
             return None
 
@@ -125,14 +125,34 @@ class SalesDataService(PropertyDataService):
     filtering.
     """
 
-    def __init__(self, parquet_path: Path) -> None:
+    def __init__(self, parquet_path: Path, hpi_path: Path | None = None) -> None:
         if not parquet_path.exists():
             raise FileNotFoundError(f"Sales data not found at {parquet_path}")
         self._path = parquet_path
         schema = pl.scan_parquet(parquet_path).collect_schema()
         self._schema: set[str] = set(schema.names())
         self._cache: dict[str, dict] = {}
-        logger.info("SalesDataService ready (parquet: %s)", parquet_path)
+
+        # Optional dedicated HPI regional parquet (preferred over embedded HPI columns).
+        if hpi_path is not None and hpi_path.exists():
+            self._hpi_path: Path | None = hpi_path
+        elif HPI_REGIONAL_DATA_PATH.exists():
+            self._hpi_path = HPI_REGIONAL_DATA_PATH
+        else:
+            self._hpi_path = None
+
+        if self._hpi_path:
+            self._hpi_schema: set[str] = set(
+                pl.scan_parquet(self._hpi_path).collect_schema().names()
+            )
+        else:
+            self._hpi_schema = set()
+
+        logger.info(
+            "SalesDataService ready (parquet: %s, hpi: %s)",
+            parquet_path,
+            self._hpi_path or "none",
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -262,9 +282,25 @@ class SalesDataService(PropertyDataService):
         )
 
         # HPI timeseries: one averageprice per year-month for the district.
-        # The parquet carries HPI data joined per-transaction; we deduplicate.
+        # Prefer the dedicated regional parquet; fall back to embedded HPI columns.
         hpi_rows: list[dict] = []
-        if "averageprice" in self._schema:
+        if self._hpi_path:
+            hpi_region_col = next(
+                (c for c in ["regionname", "region_name"] if c in self._hpi_schema), None
+            )
+            if hpi_region_col and "averageprice" in self._hpi_schema:
+                hpi_df = cast(
+                    "pl.DataFrame",
+                    pl.scan_parquet(self._hpi_path)
+                    .select([hpi_region_col, "year", "month", "averageprice"])
+                    .filter(pl.col(hpi_region_col).str.to_uppercase() == district_upper)
+                    .filter(pl.col("averageprice").is_not_null())
+                    .unique(subset=["year", "month"])
+                    .sort(["year", "month"])
+                    .collect(),
+                )
+                hpi_rows = hpi_df.to_dicts()
+        elif "averageprice" in self._schema:
             hpi_cols = self._cols(["district", "year", "month", "averageprice"])
             hpi_df = cast(
                 "pl.DataFrame",
@@ -336,3 +372,80 @@ class SalesDataService(PropertyDataService):
 
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
         return results[:n]
+
+    def get_hpi_regions(self) -> list[str]:
+        """Return distinct region names from the HPI regional parquet (or sales districts)."""
+        if self._hpi_path:
+            region_col = next(
+                (c for c in ["regionname", "region_name"] if c in self._hpi_schema), None
+            )
+            if region_col:
+                regions = (
+                    cast(
+                        "pl.DataFrame",
+                        pl.scan_parquet(self._hpi_path).select(region_col).unique().collect(),
+                    )[region_col]
+                    .drop_nulls()
+                    .to_list()
+                )
+                return sorted(str(r).title() for r in regions)
+
+        # Fallback: use distinct district values from the sales parquet
+        if "district" not in self._schema:
+            return []
+        regions = (
+            cast(
+                "pl.DataFrame",
+                self._scan().select("district").unique().collect(),
+            )["district"]
+            .drop_nulls()
+            .to_list()
+        )
+        return sorted(str(r).title() for r in regions)
+
+    def get_hpi_series(self, region: str) -> tuple[list[str], list[float]]:
+        """Return monthly HPI (average price) series for *region*.
+
+        Reads from the dedicated ``uk_hpi_regional.parquet`` when available;
+        falls back to embedded HPI columns in the sales parquet otherwise.
+        """
+        if self._hpi_path:
+            region_col = next(
+                (c for c in ["regionname", "region_name"] if c in self._hpi_schema), None
+            )
+            price_col = next(
+                (c for c in ["averageprice", "averageprice_hpi"] if c in self._hpi_schema), None
+            )
+            if region_col and price_col:
+                df = cast(
+                    "pl.DataFrame",
+                    pl.scan_parquet(self._hpi_path)
+                    .filter(pl.col(region_col).str.to_uppercase() == region.upper())
+                    .filter(pl.col(price_col).is_not_null())
+                    .select(["year", "month", price_col])
+                    .unique(subset=["year", "month"])
+                    .sort(["year", "month"])
+                    .collect(),
+                )
+                if not df.is_empty():
+                    dates = [f"{int(r['year'])}-{int(r['month']):02d}-01" for r in df.to_dicts()]
+                    return dates, [float(v) for v in df[price_col].to_list()]
+
+        # Fallback: embedded HPI columns
+        for col in ("averageprice_hpi", "averageprice"):
+            if col in self._schema:
+                df = cast(
+                    "pl.DataFrame",
+                    self._scan()
+                    .filter(pl.col("district") == region.upper())
+                    .filter(pl.col(col).is_not_null())
+                    .select(["year", "month", col])
+                    .unique(subset=["year", "month"])
+                    .sort(["year", "month"])
+                    .collect(),
+                )
+                if not df.is_empty():
+                    dates = [f"{int(r['year'])}-{int(r['month']):02d}-01" for r in df.to_dicts()]
+                    return dates, [float(v) for v in df[col].to_list()]
+
+        return [], []

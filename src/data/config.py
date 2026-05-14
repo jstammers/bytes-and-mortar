@@ -223,3 +223,38 @@ CSV_CHUNK_SIZE = 50_000  # rows per chunk when reading large CSVs
 MODELS_DIR = PROJECT_DIR / "models"
 MLRUNS_DIR = PROJECT_DIR / "mlruns"
 PROCESSED_DATA_PATH = PROCESSED_DIR / "uk_property_sales.parquet"
+HPI_REGIONAL_DATA_PATH = PROCESSED_DIR / "uk_hpi_regional.parquet"
+
+# --- Bank of England Interactive Database ---
+# Series downloaded via the BoE bulk CSV export endpoint.
+# Register: no registration required (open data).
+BOE_CSV_URL = (
+    "https://www.bankofengland.co.uk/boeapps/database/_iadb-FromShowColumns.asp"
+    "?csv.x=yes&Datefrom=01/Jan/1975&Dateto=now"
+    "&SeriesCodes={codes}&CSVF=TT&UsingCodes=Y"
+)
+# Official Bank Rate (daily)
+BOE_BASE_RATE_CODE = "IUDBEDR"
+# Effective mortgage interest rate - all loans (monthly)
+BOE_MORTGAGE_RATE_CODE = "IUMBV42"
+# Mortgage approvals for house purchase (monthly, thousands)
+BOE_APPROVALS_CODE = "LPMVTVB"
+BOE_SERIES_CODES = [BOE_BASE_RATE_CODE, BOE_MORTGAGE_RATE_CODE, BOE_APPROVALS_CODE]
+
+# --- ONS Time Series Explorer API ---
+# No API key required; data is open.
+ONS_API_BASE = "https://api.ons.gov.uk/v1"
+# Average Weekly Earnings (AWE) - total pay, seasonally adjusted (£/week)
+ONS_AWE_SERIES = "KAB9"
+ONS_AWE_DATASET = "EARN"
+# Unemployment rate, seasonally adjusted (%)
+ONS_UNEMPLOYMENT_SERIES = "MGSX"
+ONS_UNEMPLOYMENT_DATASET = "LMS"
+# GDP quarter-on-quarter growth (%)
+ONS_GDP_SERIES = "IHYQ"
+ONS_GDP_DATASET = "QNA"
+ONS_SERIES = [
+    (ONS_AWE_SERIES, ONS_AWE_DATASET),
+    (ONS_UNEMPLOYMENT_SERIES, ONS_UNEMPLOYMENT_DATASET),
+    (ONS_GDP_SERIES, ONS_GDP_DATASET),
+]

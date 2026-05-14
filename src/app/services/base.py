@@ -28,6 +28,16 @@ class PropertyDataService(ABC):
     def get_similar_properties(self, property_id: str, n: int = 8) -> list[dict]:
         raise NotImplementedError
 
+    @abstractmethod
+    def get_hpi_series(self, region: str) -> tuple[list[str], list[float]]:
+        """Return (iso_dates, average_prices) for a named region's HPI series."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_hpi_regions(self) -> list[str]:
+        """Return the list of available region/district names."""
+        raise NotImplementedError
+
 
 def get_data_service(request: Request) -> PropertyDataService:
     service = getattr(request.app.state, "data_service", None)
