@@ -53,6 +53,13 @@ download-epc la='':
 download-hpi:
     uv run bytes-and-mortar download-hpi
 
+# Pull only newly published data for one (or all) sources
+# Usage: just update             # all three sources
+#        just update epc         # only EPC
+#        just update hpi --dry-run
+update source='all' *args='':
+    uv run bytes-and-mortar update --source {{ source }} {{ args }}
+
 # Run the full ingestion pipeline
 run *args='':
     uv run bytes-and-mortar run {{ args }}

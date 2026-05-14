@@ -24,12 +24,15 @@ Fields:
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
+from src.data import manifest
 from src.data.config import (
     LAND_REGISTRY_COLUMNS,
     LAND_REGISTRY_COMPLETE_CSV,
+    LAND_REGISTRY_MONTHLY_CSV,
     LAND_REGISTRY_YEARLY_CSV,
 )
 from src.data.sources.base import DataSource
@@ -61,6 +64,88 @@ class LandRegistryPricePaid(DataSource):
             desc = "Price Paid (complete)"
 
         return self._download_file(url, dest, desc=desc)
+
+    def download_monthly(self) -> Path:
+        """Download the latest monthly update file.
+
+        Always re-fetches: the upstream URL is replaced each month with a new
+        snapshot of A/C/D rows, so a cached copy at this path is by definition
+        stale on the next invocation.
+        """
+        dest = self.raw_dir / "pp-monthly-update-new-version.csv"
+        if dest.exists():
+            dest.unlink()
+        return self._download_file(LAND_REGISTRY_MONTHLY_CSV, dest, desc="Price Paid monthly")
+
+    def merge_monthly(self, monthly_lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Apply a monthly A/C/D delta to the cached complete dataset.
+
+        Returns a LazyFrame of the merged frame in the same shape as ``load()``.
+        Does not write to disk — callers (e.g. ``ingest(incremental=True)``)
+        are responsible for persisting the result.
+
+        Semantics (record_status, per HM Land Registry):
+            A — Addition: insert if not already present.
+            C — Change:   replace any existing row with the same transaction_id.
+            D — Deletion: drop the row with that transaction_id.
+        """
+        existing = self.load()  # raw parsed frame from cached parquet/csv
+        monthly = cast("pl.DataFrame", monthly_lf.collect())
+
+        deletes = monthly.filter(pl.col("record_status") == "D").select("transaction_id").unique()
+        changes = monthly.filter(pl.col("record_status") == "C").select("transaction_id").unique()
+        # The monthly file's A and C rows together provide the new authoritative
+        # state for those transactions. D rows are pure removals.
+        new_rows = monthly.filter(pl.col("record_status").is_in(["A", "C"]))
+
+        # Drop superseded ids (both changes and deletes) from the existing frame.
+        superseded = pl.concat([deletes, changes], how="vertical").unique()
+        kept_existing = existing.join(superseded.lazy(), on="transaction_id", how="anti")
+
+        merged = pl.concat(
+            [kept_existing, new_rows.lazy()],
+            how="diagonal_relaxed",
+        )
+        return merged
+
+    def ingest(self, *, incremental: bool = False, **kwargs) -> pl.LazyFrame:
+        """Full ingestion plan.
+
+        With ``incremental=True``: download the monthly delta, merge into the
+        cached bulk, rewrite the parquet atomically, update the manifest, then
+        return the standard cleaned plan against the refreshed file.
+        Otherwise behaves identically to the base implementation.
+        """
+        if not incremental:
+            return super().ingest(**kwargs)
+
+        logger.info("Running incremental update for %s", self.name)
+        monthly_path = self.download_monthly()
+        monthly_lf = self.load(filepath=monthly_path)
+        merged_lf = self.merge_monthly(monthly_lf)
+        merged_df = cast("pl.DataFrame", merged_lf.collect())
+
+        target = self.raw_dir / "pp-complete.parquet"
+        tmp = target.with_suffix(".parquet.tmp")
+        merged_df.write_parquet(tmp)
+        tmp.replace(target)
+        logger.info("Rewrote %s with %d rows after monthly merge", target, merged_df.height)
+
+        last_through = None
+        if "date_of_transfer" in merged_df.columns:
+            max_date = merged_df.select(pl.col("date_of_transfer").max()).item()
+            if max_date is not None:
+                last_through = max_date.date() if hasattr(max_date, "date") else max_date
+
+        manifest.write_manifest(
+            self.name,
+            raw_dir=self.raw_dir,
+            last_data_through=last_through,
+            source_url=LAND_REGISTRY_MONTHLY_CSV,
+            row_count=merged_df.height,
+        )
+
+        return self.clean(self.load(filepath=target))
 
     def load(
         self,

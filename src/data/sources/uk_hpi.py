@@ -11,9 +11,11 @@ Published monthly, covering England, Scotland, Wales and Northern Ireland.
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
+from src.data import manifest
 from src.data.config import UK_HPI_DOWNLOAD_URL
 from src.data.sources.base import DataSource
 
@@ -25,16 +27,63 @@ class UKHousePriceIndex(DataSource):
 
     name = "uk_hpi"
 
-    def download(self, url: str | None = None, **kwargs) -> Path:
+    def download(
+        self,
+        url: str | None = None,
+        incremental: bool = False,
+        **kwargs,
+    ) -> Path:
         """Download UK HPI full dataset CSV.
 
         Args:
             url: Override the default download URL if a newer version
                  is available from GOV.UK.
+            incremental: When True, force-refetch the snapshot. The UK HPI
+                publishes a single monthly bulk that supersedes the prior — so
+                an incremental update is just a refresh of the same URL with
+                cache busting. The companion parquet (if present) is also
+                removed so ``load()`` re-parses the new CSV.
         """
         download_url = url or UK_HPI_DOWNLOAD_URL
         dest = self.raw_dir / "uk_hpi_full.csv"
+        if incremental:
+            if dest.exists():
+                dest.unlink()
+            parquet = dest.with_suffix(".parquet")
+            if parquet.exists():
+                parquet.unlink()
         return self._download_file(download_url, dest, desc="UK HPI")
+
+    def ingest(self, *, incremental: bool = False, **kwargs) -> pl.LazyFrame:
+        """Full ingestion plan.
+
+        With ``incremental=True``: force a fresh download (the upstream URL is
+        a monthly snapshot that is authoritative on its own), update the
+        manifest from the cleaned frame, and return the cleaned plan.
+        """
+        if not incremental:
+            return super().ingest(**kwargs)
+
+        logger.info("Running incremental update for %s", self.name)
+        url = kwargs.get("url")
+        filepath = self.download(url=url, incremental=True)
+        cleaned_lf = self.clean(self.load(filepath=filepath))
+        cleaned = cast("pl.DataFrame", cleaned_lf.collect())
+
+        last_through = None
+        if "date" in cleaned.columns and not cleaned.is_empty():
+            max_date = cleaned.select(pl.col("date").max()).item()
+            if max_date is not None:
+                last_through = max_date.date() if hasattr(max_date, "date") else max_date
+
+        manifest.write_manifest(
+            self.name,
+            raw_dir=self.raw_dir,
+            last_data_through=last_through,
+            source_url=url or UK_HPI_DOWNLOAD_URL,
+            row_count=cleaned.height,
+        )
+        return cleaned_lf
 
     def load(self, filepath: Path | None = None, **kwargs) -> pl.LazyFrame:
         """Build a lazy scan of the UK HPI data.

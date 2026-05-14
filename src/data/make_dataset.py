@@ -33,6 +33,7 @@ from typing import Annotated
 import typer
 from dotenv import find_dotenv, load_dotenv
 
+from src.data import manifest
 from src.data.config import PROCESSED_DIR, RAW_DIR
 from src.data.pipeline import run_pipeline
 from src.data.sources.bank_of_england import BankOfEnglandSeries
@@ -49,6 +50,13 @@ app.add_typer(train_app, name="train")
 class OutputFormat(StrEnum):
     parquet = "parquet"
     csv = "csv"
+
+
+class UpdateSource(StrEnum):
+    all = "all"
+    land_registry = "land-registry"
+    epc = "epc"
+    hpi = "hpi"
 
 
 @app.command()
@@ -224,6 +232,75 @@ def run(
         f"Pipeline complete: {len(df)} rows, {len(df.columns)} columns "
         f"saved to {out_dir / output_name}.{fmt.value}"
     )
+
+
+@app.command()
+def update(
+    source: Annotated[
+        UpdateSource,
+        typer.Option(help="Which source to refresh incrementally."),
+    ] = UpdateSource.all,
+    dry_run: Annotated[
+        bool,
+        typer.Option(help="Plan the update without fetching network data."),
+    ] = False,
+    output_dir: Annotated[
+        Path | None, typer.Option(help="Override raw data output directory.")
+    ] = None,
+) -> None:
+    """Pull only newly published data for one or more sources.
+
+    Land Registry → fetches the monthly A/C/D delta and upserts into the cached
+    complete parquet. EPC → pages the search API since the manifest's
+    ``last_data_through`` and merges into the cached bulk parquet. UK HPI →
+    re-fetches the monthly snapshot (authoritative; no row-level merge needed).
+
+    The manifest at ``data/raw/.ingest_manifest.json`` records what each source
+    has been advanced to so subsequent runs only fetch new ground.
+    """
+    logger = logging.getLogger(__name__)
+    raw = output_dir if output_dir else RAW_DIR
+    targets: list[str] = (
+        ["land-registry", "epc", "hpi"] if source is UpdateSource.all else [source.value]
+    )
+
+    if dry_run:
+        current = manifest.read_manifest(raw)
+        for tgt in targets:
+            src_name = _manifest_name_for(tgt)
+            entry = current.get(src_name, {})
+            logger.info(
+                "[dry-run] would update %s: last_data_through=%s row_count=%s",
+                tgt,
+                entry.get("last_data_through"),
+                entry.get("row_count"),
+            )
+        return
+
+    for tgt in targets:
+        logger.info("Updating %s incrementally", tgt)
+        if tgt == "land-registry":
+            LandRegistryPricePaid(raw_dir=raw).ingest(incremental=True).collect()
+        elif tgt == "epc":
+            EPCData(raw_dir=raw).ingest(incremental=True).collect()
+        elif tgt == "hpi":
+            UKHousePriceIndex(raw_dir=raw).ingest(incremental=True).collect()
+
+    summary = manifest.read_manifest(raw)
+    for tgt in targets:
+        entry = summary.get(_manifest_name_for(tgt), {})
+        typer.echo(
+            f"{tgt}: last_data_through={entry.get('last_data_through')} "
+            f"row_count={entry.get('row_count')}"
+        )
+
+
+def _manifest_name_for(target: str) -> str:
+    return {
+        "land-registry": "land_registry_price_paid",
+        "epc": "epc_domestic",
+        "hpi": "uk_hpi",
+    }[target]
 
 
 @app.command()
