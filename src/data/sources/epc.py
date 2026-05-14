@@ -21,13 +21,16 @@ import logging
 import os
 import shutil
 import time
+from datetime import date
 from io import BytesIO
 from pathlib import Path
+from typing import cast
 from zipfile import ZipFile
 
 import polars as pl
 import requests
 
+from src.data import manifest
 from src.data.config import EPC_DOMESTIC_SCHEMA, EPC_DOMESTIC_SEARCH
 from src.data.sources.base import DataSource
 
@@ -111,6 +114,7 @@ class EPCData(DataSource):
         from_month: int | None = None,
         from_year: int | None = None,
         max_pages: int = 100000,
+        incremental: bool = False,
         **kwargs,
     ) -> Path:
         """Download EPC data.
@@ -128,6 +132,9 @@ class EPCData(DataSource):
             from_month: Filter certificates from this month (1-12). Only used with use_search=True.
             from_year: Filter certificates from this year. Only used with use_search=True.
             max_pages: Maximum number of pages to fetch (each page = 5000 rows). Only used with use_search=True.
+            incremental: If True, fetch only certificates lodged since the manifest's
+                ``last_data_through`` date and merge them into the cached bulk parquet.
+                Mutually exclusive with use_search; takes precedence when both are set.
 
         Returns:
             Path to the downloaded/extracted EPC data file (CSV).
@@ -136,6 +143,9 @@ class EPCData(DataSource):
             raise ValueError(
                 "EPC API token not set. Set EPC_API_USER and EPC_API_PASS in .env or pass them to the constructor."
             )
+
+        if incremental:
+            return self._download_incremental(max_pages=max_pages)
 
         if use_search:
             # Delegate to search-based download
@@ -150,6 +160,164 @@ class EPCData(DataSource):
 
         # Bulk download (default)
         return self._download_bulk(bulk_file=bulk_file)
+
+    def _download_incremental(self, max_pages: int = 100000) -> Path:
+        """Fetch certificates lodged since the manifest's last_data_through date.
+
+        Requires a cached bulk parquet to merge into. Pages the search API with
+        ``from-year``/``from-month`` set from the manifest, writes the delta to
+        ``epc_domestic_delta_<YYYYMM>.parquet``, then upserts into the bulk
+        parquet (dedup on ``lmk-key``, keep most recent ``inspection-date``).
+
+        Returns the path to the refreshed bulk parquet.
+        """
+        bulk_path = self.raw_dir / "epc_domestic_bulk.parquet"
+        if not bulk_path.exists():
+            raise FileNotFoundError(
+                f"Cannot run EPC incremental update without a cached bulk at {bulk_path}. "
+                "Run a non-incremental download first."
+            )
+
+        last_through = manifest.get_last_through(self.name, raw_dir=self.raw_dir)
+        if last_through is None:
+            raise RuntimeError(
+                "EPC manifest entry missing 'last_data_through'. "
+                "Run a non-incremental ingest first to seed the manifest."
+            )
+
+        delta_path = self._fetch_delta_since(last_through, max_pages=max_pages)
+        self._merge_into_bulk(delta_path, bulk_path)
+        return bulk_path
+
+    def _fetch_delta_since(self, since: date, max_pages: int) -> Path:
+        """Page the search API for certificates lodged on or after ``since``.
+
+        Writes the result to ``epc_domestic_delta_<YYYYMM>.parquet`` (with the
+        month of ``since``) and returns the path. The first day of ``since``'s
+        month is used as the lower bound — the API filters by month granularity.
+        """
+        delta_filename = f"epc_domestic_delta_{since.year:04d}{since.month:02d}.parquet"
+        dest = self.raw_dir / delta_filename
+        if dest.exists():
+            logger.info("EPC delta already present, reusing: %s", dest)
+            return dest
+
+        params: dict[str, int | str] = {
+            "size": EPC_PAGE_SIZE,
+            "from-year": since.year,
+            "from-month": since.month,
+        }
+
+        all_rows: list[str] = []
+        for page in range(max_pages):
+            params["search-after"] = page * EPC_PAGE_SIZE
+            logger.info(
+                "Fetching EPC delta page %d (from row %d, since %s)",
+                page + 1,
+                params["search-after"],
+                since.isoformat(),
+            )
+
+            headers = self._get_headers()
+            headers["Accept"] = "text/csv"
+            response = requests.get(
+                EPC_DOMESTIC_SEARCH,
+                headers=headers,
+                params=params,
+                timeout=60,
+            )
+            response.raise_for_status()
+
+            text = response.text.strip()
+            # A page with zero data rows has only the header (no newlines).
+            if not text or text.count("\n") < 1:
+                logger.info("No more EPC delta data at page %d", page + 1)
+                break
+
+            all_rows.append(text)
+            time.sleep(EPC_RATE_LIMIT_DELAY)
+
+        if not all_rows:
+            # Write an empty parquet so callers see "no new rows" without erroring.
+            pl.DataFrame().write_parquet(dest)
+            logger.info("No new EPC rows since %s; wrote empty delta to %s", since, dest)
+            return dest
+
+        header = all_rows[0].split("\n")[0]
+        lines = [header]
+        for chunk in all_rows:
+            chunk_lines = chunk.split("\n")
+            lines.extend(chunk_lines[1:])
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        pl.read_csv(BytesIO("\n".join(lines).encode())).write_parquet(dest)
+        logger.info("Saved EPC delta to %s", dest)
+        return dest
+
+    def _merge_into_bulk(self, delta_path: Path, bulk_path: Path) -> None:
+        """Upsert a delta parquet into the cached bulk parquet.
+
+        Dedup key is ``lmk-key`` (the lodgement-event identifier). When the
+        same key appears in both, the row with the most recent
+        ``inspection-date`` wins. Writes atomically via ``.tmp`` rename.
+        """
+        delta_df = cast("pl.DataFrame", pl.scan_parquet(delta_path).collect())
+        if delta_df.is_empty():
+            logger.info("EPC delta is empty; bulk parquet unchanged.")
+            return
+
+        bulk_lf = pl.scan_parquet(bulk_path)
+        combined_lf = pl.concat([bulk_lf, delta_df.lazy()], how="diagonal_relaxed")
+        combined = cast("pl.DataFrame", combined_lf.collect())
+
+        if "lmk-key" in combined.columns and "inspection-date" in combined.columns:
+            combined = combined.sort("inspection-date", descending=True, nulls_last=True).unique(
+                subset=["lmk-key"], keep="first"
+            )
+
+        tmp = bulk_path.with_suffix(".parquet.tmp")
+        combined.write_parquet(tmp)
+        tmp.replace(bulk_path)
+        logger.info(
+            "Merged %d delta rows into %s (final size: %d)",
+            delta_df.height,
+            bulk_path,
+            combined.height,
+        )
+
+    def ingest(self, *, incremental: bool = False, **kwargs) -> pl.LazyFrame:
+        """Full ingestion plan.
+
+        With ``incremental=True``: page the search API for certificates lodged
+        since the manifest's ``last_data_through``, merge into the cached bulk,
+        update the manifest, then return the standard cleaned plan. Otherwise
+        behaves identically to the base implementation.
+        """
+        if not incremental:
+            return super().ingest(**kwargs)
+
+        logger.info("Running incremental update for %s", self.name)
+        bulk_path = self._download_incremental()
+        cleaned_lf = self.clean(self.load(filepath=bulk_path))
+
+        # Refresh the manifest from the merged bulk so subsequent runs pick up
+        # the new high-water mark.
+        merged = cast("pl.DataFrame", pl.scan_parquet(bulk_path).collect())
+        last_through = None
+        if "inspection-date" in merged.columns and not merged.is_empty():
+            max_date = merged.select(pl.col("inspection-date").max()).item()
+            if max_date is not None:
+                last_through = max_date.date() if hasattr(max_date, "date") else max_date
+
+        manifest.write_manifest(
+            self.name,
+            raw_dir=self.raw_dir,
+            last_data_through=last_through,
+            source_url=EPC_DOMESTIC_SEARCH,
+            row_count=merged.height,
+        )
+
+        return cleaned_lf
 
     def _download_bulk(self, bulk_file: str | None = None) -> Path:
         """Download entire EPC dataset from bulk file.
