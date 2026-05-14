@@ -72,6 +72,10 @@ install-ml:
 install-notebooks:
     uv sync --extra dev --extra ml --extra notebooks
 
+# Open the model-exploration marimo notebook
+notebook:
+    uv run marimo edit notebooks/model_exploration.py
+
 # Train a model (default: perpetual, budget=1.0)
 train *args='':
     uv run bytes-and-mortar train run {{ args }}
