@@ -160,7 +160,7 @@ class ONSTimeSeries(DataSource):
         quarter_map = {"Q1": "01", "Q2": "04", "Q3": "07", "Q4": "10"}
 
         # Collect to apply Python-side date parsing (ONS date strings are heterogeneous)
-        df = lf.collect()
+        df: pl.DataFrame = lf.collect()  # type: ignore
 
         if df.is_empty():
             return pl.LazyFrame(schema={"date": pl.Date, "series": pl.String, "value": pl.Float64})

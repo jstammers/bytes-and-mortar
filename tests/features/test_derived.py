@@ -85,9 +85,7 @@ class TestDerivedFeatureTransformer:
     def test_floor_area_per_room_formula(self, transformer, sample_df):
         out = transformer.fit_transform(sample_df)
         expected = sample_df["total_floor_area"] / sample_df["number_habitable_rooms"].clip(lower=1)
-        np.testing.assert_allclose(
-            out["floor_area_per_room"].values, expected.values, rtol=1e-6
-        )
+        np.testing.assert_allclose(out["floor_area_per_room"].values, expected.values, rtol=1e-6)
 
     def test_energy_rating_numeric_values(self, transformer, sample_df):
         out = transformer.fit_transform(sample_df)

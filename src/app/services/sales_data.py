@@ -381,10 +381,10 @@ class SalesDataService(PropertyDataService):
             )
             if region_col:
                 regions = (
-                    pl.scan_parquet(self._hpi_path)
-                    .select(region_col)
-                    .unique()
-                    .collect()[region_col]
+                    cast(
+                        "pl.DataFrame",
+                        pl.scan_parquet(self._hpi_path).select(region_col).unique().collect(),
+                    )[region_col]
                     .drop_nulls()
                     .to_list()
                 )
@@ -394,7 +394,12 @@ class SalesDataService(PropertyDataService):
         if "district" not in self._schema:
             return []
         regions = (
-            self._scan().select("district").unique().collect()["district"].drop_nulls().to_list()
+            cast(
+                "pl.DataFrame",
+                self._scan().select("district").unique().collect(),
+            )["district"]
+            .drop_nulls()
+            .to_list()
         )
         return sorted(str(r).title() for r in regions)
 
@@ -412,14 +417,15 @@ class SalesDataService(PropertyDataService):
                 (c for c in ["averageprice", "averageprice_hpi"] if c in self._hpi_schema), None
             )
             if region_col and price_col:
-                df = (
+                df = cast(
+                    "pl.DataFrame",
                     pl.scan_parquet(self._hpi_path)
                     .filter(pl.col(region_col).str.to_uppercase() == region.upper())
                     .filter(pl.col(price_col).is_not_null())
                     .select(["year", "month", price_col])
                     .unique(subset=["year", "month"])
                     .sort(["year", "month"])
-                    .collect()
+                    .collect(),
                 )
                 if not df.is_empty():
                     dates = [f"{int(r['year'])}-{int(r['month']):02d}-01" for r in df.to_dicts()]
@@ -428,14 +434,15 @@ class SalesDataService(PropertyDataService):
         # Fallback: embedded HPI columns
         for col in ("averageprice_hpi", "averageprice"):
             if col in self._schema:
-                df = (
+                df = cast(
+                    "pl.DataFrame",
                     self._scan()
                     .filter(pl.col("district") == region.upper())
                     .filter(pl.col(col).is_not_null())
                     .select(["year", "month", col])
                     .unique(subset=["year", "month"])
                     .sort(["year", "month"])
-                    .collect()
+                    .collect(),
                 )
                 if not df.is_empty():
                     dates = [f"{int(r['year'])}-{int(r['month']):02d}-01" for r in df.to_dicts()]
