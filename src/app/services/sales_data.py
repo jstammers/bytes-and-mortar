@@ -81,7 +81,7 @@ def _row_to_prop(row: dict) -> dict:
 
     def _int(val: object) -> int | None:
         try:
-            return int(val)  # type: ignore[arg-type]
+            return int(val)  # type: ignore
         except (TypeError, ValueError):
             return None
 

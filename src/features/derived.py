@@ -136,5 +136,5 @@ class DerivedFeatureTransformer(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, input_features: object = None) -> list[str]:
         """Return the names of output columns (passthrough + derived)."""
         # Sklearn convention: return column names if input_features is supplied
-        base = list(input_features) if input_features is not None else []
+        base = list(input_features) if input_features is not None else []  # type: ignore
         return base + DERIVED_NUMERIC_FEATURES

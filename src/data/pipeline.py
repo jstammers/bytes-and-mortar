@@ -560,6 +560,6 @@ def run_pipeline(
         save_hpi_regional(hpi_lf, output_dir=output_dir or PROCESSED_DIR)
 
     saved_lf = pl.scan_parquet(dest) if fmt == "parquet" else pl.scan_csv(dest)
-    df = pl.DataFrame(saved_lf.collect())
+    df: pl.DataFrame = saved_lf.collect()  # type: ignore
     logger.info("Pipeline complete: %d rows, %d columns", len(df), len(df.columns))
     return df
