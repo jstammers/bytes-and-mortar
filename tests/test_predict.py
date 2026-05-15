@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.models import predict
+from src.models.property_price import predict
 
 
 def _fake_pipeline(point_log: float):

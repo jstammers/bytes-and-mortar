@@ -20,7 +20,7 @@ gap) while being ~12× faster to train.
 
 Usage::
 
-    from src.models.perpetual_model import build_perpetual_pipeline
+    from src.models.property_price.perpetual import build_perpetual_pipeline
 
     pipeline = build_perpetual_pipeline(budget=1.0)
     pipeline.fit(X_train, y_train_log)
@@ -37,7 +37,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
 
-from src.features.build_features import FeatureConfig, build_feature_pipeline
+from src.models.property_price.features import FeatureConfig, build_feature_pipeline
 
 if TYPE_CHECKING:
     import pandas as pd

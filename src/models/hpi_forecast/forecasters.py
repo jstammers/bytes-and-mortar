@@ -60,7 +60,7 @@ Usage
 ::
 
     import polars as pl
-    from src.models.hpi_forecast import EnsembleForecaster
+    from src.models.hpi_forecast.forecasters import EnsembleForecaster
 
     df = pl.read_parquet("data/processed/uk_hpi_england.parquet")
     england = df.filter(pl.col("regionname") == "England").sort("date")
@@ -642,7 +642,7 @@ class ARIMAXForecaster(SARIMAForecaster):
     ::
 
         import polars as pl, numpy as np
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         hpi_values  = np.array([...])         # monthly HPI averageprices
         hpi_dates   = [...]                   # list[date], same length

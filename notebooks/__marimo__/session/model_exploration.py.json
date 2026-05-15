@@ -1,0 +1,405 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.20.4",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "43efa02123c4bff7c016bbbc9dcfe8b1",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "956e6867cb469df66456c40926504426",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"property-model-exploration\">Property model exploration</h1>\n<span class=\"paragraph\">Diagnose the trained Perpetual GBM:</span>\n<ol>\n<li>How do regional house prices track the <strong>HPI</strong> \u2014 and where does the model err most?</li>\n<li>How have prices for <strong>each property type</strong> moved across the country, and where do\n   they sell above / below the national average?</li>\n<li><strong>Score one property</strong> interactively and see the predictive distribution.</li>\n</ol></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "298956730c9715e6bac6b02901fcba6e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "bc7cc83c8c38204d53f7ee1e898c95d3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "962f696515df0a82ed16304acfeee75b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "beba7443ccac763a0665d9ff27594b81",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "944f18014e4a69acb0311ef835d12a6c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\">Loaded <strong>361</strong> LAD polygons for choropleth maps.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "6bb3cade670ffad8a1a9c65967b5d36f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"1-hpi-vs-regional-house-prices\">1. HPI vs regional house prices</h2>\n<span class=\"paragraph\">How do district-level <strong>actual</strong> sale prices compare to the <strong>UK HPI</strong>,\nand where does the model predict well or poorly?</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "a6bc04a13033fd327b4a5b7bbcd8c892",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'hpi_df' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "<span class=\"codehilite\"><div class=\"highlight\"><pre><span></span><span class=\"gt\">Traceback (most recent call last):</span>\n  File <span class=\"nb\">&quot;/var/folders/y2/3t9h52w54jsbvfck_nqst2sc0000gn/T/marimo_62255/__marimo__cell_RGSE_.py&quot;</span>, line <span class=\"m\">14</span>, in <span class=\"n\">&lt;module&gt;</span>\n<span class=\"w\">    </span><span class=\"n\">hpi_by_district</span> <span class=\"o\">=</span> <span class=\"n\">hpi_df</span><span class=\"o\">.</span><span class=\"n\">groupby</span><span class=\"p\">(</span><span class=\"s2\">&quot;district&quot;</span><span class=\"p\">,</span> <span class=\"n\">as_index</span><span class=\"o\">=</span><span class=\"kc\">False</span><span class=\"p\">)</span><span class=\"o\">.</span><span class=\"n\">agg</span><span class=\"p\">(</span>\n<span class=\"w\">                      </span><span class=\"pm\">^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>\n  File <span class=\"nb\">&quot;/Users/jimmy/Documents/Code/Python/bytes-and-mortar/.venv/lib/python3.11/site-packages/pandas/core/frame.py&quot;</span>, line <span class=\"m\">9210</span>, in <span class=\"n\">groupby</span>\n<span class=\"w\">    </span><span class=\"k\">return</span> <span class=\"n\">DataFrameGroupBy</span><span class=\"p\">(</span>\n<span class=\"w\">           </span><span class=\"pm\">^^^^^^^^^^^^^^^^^</span>\n  File <span class=\"nb\">&quot;/Users/jimmy/Documents/Code/Python/bytes-and-mortar/.venv/lib/python3.11/site-packages/pandas/core/groupby/groupby.py&quot;</span>, line <span class=\"m\">1331</span>, in <span class=\"n\">__init__</span>\n<span class=\"w\">    </span><span class=\"n\">grouper</span><span class=\"p\">,</span> <span class=\"n\">exclusions</span><span class=\"p\">,</span> <span class=\"n\">obj</span> <span class=\"o\">=</span> <span class=\"n\">get_grouper</span><span class=\"p\">(</span>\n<span class=\"w\">                               </span><span class=\"pm\">^^^^^^^^^^^^</span>\n  File <span class=\"nb\">&quot;/Users/jimmy/Documents/Code/Python/bytes-and-mortar/.venv/lib/python3.11/site-packages/pandas/core/groupby/grouper.py&quot;</span>, line <span class=\"m\">1043</span>, in <span class=\"n\">get_grouper</span>\n<span class=\"w\">    </span><span class=\"k\">raise</span> <span class=\"ne\">KeyError</span><span class=\"p\">(</span><span class=\"n\">gpr</span><span class=\"p\">)</span>\n<span class=\"gr\">KeyError</span>: <span class=\"n\">&#39;district&#39;</span>\n</pre></div>\n</span>",
+          "mimetype": "application/vnd.marimo+traceback"
+        }
+      ]
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "576a2e857f98b9e96a36bcf57ff2b969",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'choropleth' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "1d1a967a9749e401fbc8733928109e81",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'choropleth' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "80ad8f2f40896f39b6ceb884313d3cb5",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "exception",
+          "evalue": "Name `regional_mdape` is not defined. It was expected to be defined in ",
+          "traceback": []
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "<span class=\"codehilite\"><div class=\"highlight\"><pre><span></span><span class=\"gt\">Traceback (most recent call last):</span>\n  File <span class=\"nb\">&quot;/var/folders/y2/3t9h52w54jsbvfck_nqst2sc0000gn/T/marimo_62255/__marimo__cell_Hstk_.py&quot;</span>, line <span class=\"m\">1</span>, in <span class=\"n\">&lt;module&gt;</span>\n<span class=\"w\">    </span><span class=\"k\">if</span> <span class=\"n\">regional_mdape</span> <span class=\"ow\">is</span> <span class=\"kc\">None</span><span class=\"p\">:</span>\n<span class=\"w\">       </span><span class=\"pm\">^^^^^^^^^^^^^^</span>\n<span class=\"gr\">NameError</span>: <span class=\"n\">name &#39;regional_mdape&#39; is not defined</span>\n</pre></div>\n</span>",
+          "mimetype": "application/vnd.marimo+traceback"
+        }
+      ]
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "40faba8b8e45a5ee0c2c6b372fabfb9c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='nWHF-0' random-id='44eb1410-a0c0-5a9a-b6df-cd59982607b8'><marimo-dropdown data-initial-value='[&quot;ADUR&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Forecast district&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;ADUR&quot;,&quot;AMBER VALLEY&quot;,&quot;ARUN&quot;,&quot;ASHFIELD&quot;,&quot;ASHFORD&quot;,&quot;BABERGH&quot;,&quot;BARKING AND DAGENHAM&quot;,&quot;BARNET&quot;,&quot;BARNSLEY&quot;,&quot;BASILDON&quot;,&quot;BASINGSTOKE AND DEANE&quot;,&quot;BASSETLAW&quot;,&quot;BATH AND NORTH EAST SOMERSET&quot;,&quot;BEDFORD&quot;,&quot;BEXLEY&quot;,&quot;BIRMINGHAM&quot;,&quot;BLABY&quot;,&quot;BLACKBURN WITH DARWEN&quot;,&quot;BLACKPOOL&quot;,&quot;BLAENAU GWENT&quot;,&quot;BOLSOVER&quot;,&quot;BOLTON&quot;,&quot;BOSTON&quot;,&quot;BOURNEMOUTH, CHRISTCHURCH AND POOLE&quot;,&quot;BRACKNELL FOREST&quot;,&quot;BRADFORD&quot;,&quot;BRAINTREE&quot;,&quot;BRECKLAND&quot;,&quot;BRENT&quot;,&quot;BRENTWOOD&quot;,&quot;BRIDGEND&quot;,&quot;BRIGHTON AND HOVE&quot;,&quot;BROADLAND&quot;,&quot;BROMLEY&quot;,&quot;BROMSGROVE&quot;,&quot;BROXBOURNE&quot;,&quot;BROXTOWE&quot;,&quot;BUCKINGHAMSHIRE&quot;,&quot;BURNLEY&quot;,&quot;BURY&quot;,&quot;CAERPHILLY&quot;,&quot;CALDERDALE&quot;,&quot;CAMBRIDGE&quot;,&quot;CAMDEN&quot;,&quot;CANNOCK CHASE&quot;,&quot;CANTERBURY&quot;,&quot;CARDIFF&quot;,&quot;CARMARTHENSHIRE&quot;,&quot;CASTLE POINT&quot;,&quot;CENTRAL BEDFORDSHIRE&quot;,&quot;CEREDIGION&quot;,&quot;CHARNWOOD&quot;,&quot;CHELMSFORD&quot;,&quot;CHELTENHAM&quot;,&quot;CHERWELL&quot;,&quot;CHESHIRE EAST&quot;,&quot;CHESHIRE WEST AND CHESTER&quot;,&quot;CHESTERFIELD&quot;,&quot;CHICHESTER&quot;,&quot;CHORLEY&quot;,&quot;CITY OF BRISTOL&quot;,&quot;CITY OF DERBY&quot;,&quot;CITY OF KINGSTON UPON HULL&quot;,&quot;CITY OF LONDON&quot;,&quot;CITY OF NOTTINGHAM&quot;,&quot;CITY OF PETERBOROUGH&quot;,&quot;CITY OF PLYMOUTH&quot;,&quot;CITY OF WESTMINSTER&quot;,&quot;COLCHESTER&quot;,&quot;CONWY&quot;,&quot;CORNWALL&quot;,&quot;COTSWOLD&quot;,&quot;COUNTY DURHAM&quot;,&quot;COVENTRY&quot;,&quot;CRAWLEY&quot;,&quot;CROYDON&quot;,&quot;CUMBERLAND&quot;,&quot;DACORUM&quot;,&quot;DARLINGTON&quot;,&quot;DARTFORD&quot;,&quot;DENBIGHSHIRE&quot;,&quot;DERBYSHIRE DALES&quot;,&quot;DONCASTER&quot;,&quot;DORSET&quot;,&quot;DOVER&quot;,&quot;DUDLEY&quot;,&quot;EALING&quot;,&quot;EAST CAMBRIDGESHIRE&quot;,&quot;EAST DEVON&quot;,&quot;EAST HAMPSHIRE&quot;,&quot;EAST HERTFORDSHIRE&quot;,&quot;EAST LINDSEY&quot;,&quot;EAST RIDING OF YORKSHIRE&quot;,&quot;EAST STAFFORDSHIRE&quot;,&quot;EAST SUFFOLK&quot;,&quot;EASTBOURNE&quot;,&quot;EASTLEIGH&quot;,&quot;ELMBRIDGE&quot;,&quot;ENFIELD&quot;,&quot;EPPING FOREST&quot;,&quot;EPSOM AND EWELL&quot;,&quot;EREWASH&quot;,&quot;EXETER&quot;,&quot;FAREHAM&quot;,&quot;FENLAND&quot;,&quot;FLINTSHIRE&quot;,&quot;FOLKESTONE AND HYTHE&quot;,&quot;FOREST OF DEAN&quot;,&quot;FYLDE&quot;,&quot;GATESHEAD&quot;,&quot;GEDLING&quot;,&quot;GLOUCESTER&quot;,&quot;GOSPORT&quot;,&quot;GRAVESHAM&quot;,&quot;GREAT YARMOUTH&quot;,&quot;GREENWICH&quot;,&quot;GUILDFORD&quot;,&quot;GWYNEDD&quot;,&quot;HACKNEY&quot;,&quot;HALTON&quot;,&quot;HAMMERSMITH AND FULHAM&quot;,&quot;HARBOROUGH&quot;,&quot;HARINGEY&quot;,&quot;HARLOW&quot;,&quot;HARROW&quot;,&quot;HART&quot;,&quot;HARTLEPOOL&quot;,&quot;HASTINGS&quot;,&quot;HAVANT&quot;,&quot;HAVERING&quot;,&quot;HEREFORDSHIRE&quot;,&quot;HERTSMERE&quot;,&quot;HIGH PEAK&quot;,&quot;HILLINGDON&quot;,&quot;HINCKLEY AND BOSWORTH&quot;,&quot;HORSHAM&quot;,&quot;HOUNSLOW&quot;,&quot;HUNTINGDONSHIRE&quot;,&quot;HYNDBURN&quot;,&quot;IPSWICH&quot;,&quot;ISLE OF ANGLESEY&quot;,&quot;ISLE OF WIGHT&quot;,&quot;ISLES OF SCILLY&quot;,&quot;ISLINGTON&quot;,&quot;KENSINGTON AND CHELSEA&quot;,&quot;KING&#x27;S LYNN AND WEST NORFOLK&quot;,&quot;KINGSTON UPON THAMES&quot;,&quot;KIRKLEES&quot;,&quot;KNOWSLEY&quot;,&quot;LAMBETH&quot;,&quot;LANCASTER&quot;,&quot;LEEDS&quot;,&quot;LEICESTER&quot;,&quot;LEWES&quot;,&quot;LEWISHAM&quot;,&quot;LICHFIELD&quot;,&quot;LINCOLN&quot;,&quot;LIVERPOOL&quot;,&quot;LUTON&quot;,&quot;MAIDSTONE&quot;,&quot;MALDON&quot;,&quot;MALVERN HILLS&quot;,&quot;MANCHESTER&quot;,&quot;MANSFIELD&quot;,&quot;MEDWAY&quot;,&quot;MELTON&quot;,&quot;MERTHYR TYDFIL&quot;,&quot;MERTON&quot;,&quot;MID DEVON&quot;,&quot;MID SUFFOLK&quot;,&quot;MID SUSSEX&quot;,&quot;MIDDLESBROUGH&quot;,&quot;MILTON KEYNES&quot;,&quot;MOLE VALLEY&quot;,&quot;MONMOUTHSHIRE&quot;,&quot;NEATH PORT TALBOT&quot;,&quot;NEW FOREST&quot;,&quot;NEWARK AND SHERWOOD&quot;,&quot;NEWCASTLE UPON TYNE&quot;,&quot;NEWCASTLE-UNDER-LYME&quot;,&quot;NEWHAM&quot;,&quot;NEWPORT&quot;,&quot;NORTH DEVON&quot;,&quot;NORTH EAST DERBYSHIRE&quot;,&quot;NORTH EAST LINCOLNSHIRE&quot;,&quot;NORTH HERTFORDSHIRE&quot;,&quot;NORTH KESTEVEN&quot;,&quot;NORTH LINCOLNSHIRE&quot;,&quot;NORTH NORFOLK&quot;,&quot;NORTH NORTHAMPTONSHIRE&quot;,&quot;NORTH SOMERSET&quot;,&quot;NORTH TYNESIDE&quot;,&quot;NORTH WARWICKSHIRE&quot;,&quot;NORTH WEST LEICESTERSHIRE&quot;,&quot;NORTH YORKSHIRE&quot;,&quot;NORTHUMBERLAND&quot;,&quot;NORWICH&quot;,&quot;NUNEATON AND BEDWORTH&quot;,&quot;OADBY AND WIGSTON&quot;,&quot;OLDHAM&quot;,&quot;OXFORD&quot;,&quot;PEMBROKESHIRE&quot;,&quot;PENDLE&quot;,&quot;PORTSMOUTH&quot;,&quot;POWYS&quot;,&quot;PRESTON&quot;,&quot;READING&quot;,&quot;REDBRIDGE&quot;,&quot;REDCAR AND CLEVELAND&quot;,&quot;REDDITCH&quot;,&quot;REIGATE AND BANSTEAD&quot;,&quot;RHONDDA CYNON TAFF&quot;,&quot;RIBBLE VALLEY&quot;,&quot;RICHMOND UPON THAMES&quot;,&quot;ROCHDALE&quot;,&quot;ROCHFORD&quot;,&quot;ROSSENDALE&quot;,&quot;ROTHER&quot;,&quot;ROTHERHAM&quot;,&quot;RUGBY&quot;,&quot;RUNNYMEDE&quot;,&quot;RUSHCLIFFE&quot;,&quot;RUSHMOOR&quot;,&quot;RUTLAND&quot;,&quot;SALFORD&quot;,&quot;SANDWELL&quot;,&quot;SEFTON&quot;,&quot;SEVENOAKS&quot;,&quot;SHEFFIELD&quot;,&quot;SHROPSHIRE&quot;,&quot;SLOUGH&quot;,&quot;SOLIHULL&quot;,&quot;SOMERSET&quot;,&quot;SOUTH CAMBRIDGESHIRE&quot;,&quot;SOUTH DERBYSHIRE&quot;,&quot;SOUTH GLOUCESTERSHIRE&quot;,&quot;SOUTH HAMS&quot;,&quot;SOUTH HOLLAND&quot;,&quot;SOUTH KESTEVEN&quot;,&quot;SOUTH NORFOLK&quot;,&quot;SOUTH OXFORDSHIRE&quot;,&quot;SOUTH RIBBLE&quot;,&quot;SOUTH STAFFORDSHIRE&quot;,&quot;SOUTH TYNESIDE&quot;,&quot;SOUTHAMPTON&quot;,&quot;SOUTHEND-ON-SEA&quot;,&quot;SOUTHWARK&quot;,&quot;SPELTHORNE&quot;,&quot;ST ALBANS&quot;,&quot;ST HELENS&quot;,&quot;STAFFORD&quot;,&quot;STAFFORDSHIRE MOORLANDS&quot;,&quot;STEVENAGE&quot;,&quot;STOCKPORT&quot;,&quot;STOCKTON-ON-TEES&quot;,&quot;STOKE-ON-TRENT&quot;,&quot;STRATFORD-ON-AVON&quot;,&quot;STROUD&quot;,&quot;SUNDERLAND&quot;,&quot;SURREY HEATH&quot;,&quot;SUTTON&quot;,&quot;SWALE&quot;,&quot;SWANSEA&quot;,&quot;SWINDON&quot;,&quot;TAMESIDE&quot;,&quot;TAMWORTH&quot;,&quot;TANDRIDGE&quot;,&quot;TEIGNBRIDGE&quot;,&quot;TENDRING&quot;,&quot;TEST VALLEY&quot;,&quot;TEWKESBURY&quot;,&quot;THANET&quot;,&quot;THE VALE OF GLAMORGAN&quot;,&quot;THREE RIVERS&quot;,&quot;THURROCK&quot;,&quot;TONBRIDGE AND MALLING&quot;,&quot;TORBAY&quot;,&quot;TORFAEN&quot;,&quot;TORRIDGE&quot;,&quot;TOWER HAMLETS&quot;,&quot;TRAFFORD&quot;,&quot;TUNBRIDGE WELLS&quot;,&quot;UTTLESFORD&quot;,&quot;VALE OF WHITE HORSE&quot;,&quot;WAKEFIELD&quot;,&quot;WALSALL&quot;,&quot;WALTHAM FOREST&quot;,&quot;WANDSWORTH&quot;,&quot;WARRINGTON&quot;,&quot;WARWICK&quot;,&quot;WATFORD&quot;,&quot;WAVERLEY&quot;,&quot;WEALDEN&quot;,&quot;WELWYN HATFIELD&quot;,&quot;WEST BERKSHIRE&quot;,&quot;WEST DEVON&quot;,&quot;WEST LANCASHIRE&quot;,&quot;WEST LINDSEY&quot;,&quot;WEST NORTHAMPTONSHIRE&quot;,&quot;WEST OXFORDSHIRE&quot;,&quot;WEST SUFFOLK&quot;,&quot;WESTMORLAND AND FURNESS&quot;,&quot;WIGAN&quot;,&quot;WILTSHIRE&quot;,&quot;WINCHESTER&quot;,&quot;WINDSOR AND MAIDENHEAD&quot;,&quot;WIRRAL&quot;,&quot;WOKING&quot;,&quot;WOKINGHAM&quot;,&quot;WOLVERHAMPTON&quot;,&quot;WORCESTER&quot;,&quot;WORTHING&quot;,&quot;WREKIN&quot;,&quot;WREXHAM&quot;,&quot;WYCHAVON&quot;,&quot;WYRE&quot;,&quot;WYRE FOREST&quot;,&quot;YORK&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false'></marimo-dropdown></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "d48820d0de4722c92f31dac0aca61050",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'ax' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'fig' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'hpi_df' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "c3ae1f4c223a2a11f5ff2934a36104f3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"2-property-types-over-time\">2. Property types over time</h2>\n<span class=\"paragraph\">National trend by property type, then how each type's median deviates from\nthe national average across the country in a chosen year.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "8d7a8b5013261218f2539606c1670d69",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "qnkX",
+      "code_hash": "83aed6768c89318b3bee116f1546605a",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'ax' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'fig' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'pt' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TqIu",
+      "code_hash": "53408c7f69bc757ee2657b2822bf09ba",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: row;justify-content: space-between;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><marimo-ui-element object-id='TqIu-0' random-id='e1f435f4-72b1-473b-7fc9-b47e5bbfc877'><marimo-slider data-initial-value='2026' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Year&lt;/span&gt;&lt;/span&gt;&quot;' data-start='1995' data-stop='2026' data-step='1' data-steps='[]' data-debounce='false' data-disabled='false' data-orientation='&quot;horizontal&quot;' data-show-value='false' data-include-input='false' data-full-width='false'></marimo-slider></marimo-ui-element><marimo-ui-element object-id='TqIu-1' random-id='180fa96c-70d8-b3b0-07c3-e38e7863a2c0'><marimo-dropdown data-initial-value='[&quot;D&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Property type (D/S/T/F)&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;D&quot;,&quot;S&quot;,&quot;T&quot;,&quot;F&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false'></marimo-dropdown></marimo-ui-element></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Vxnm",
+      "code_hash": "a9448a157fc33a7f3f9b34ca6abab09d",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'cache' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'dev' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'national_median' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'pt' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'year' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "DnEU",
+      "code_hash": "790eee49281c36ad58d3168c630e66db",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'cache' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'dev' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'national_median' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'pt' was defined by another cell",
+          "traceback": []
+        },
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'year' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ulZA",
+      "code_hash": "4a8b3e29af94e4c448c1a37ff78f82f9",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"3-interactive-valuation\">3. Interactive valuation</h2>\n<span class=\"paragraph\">Specify a property below and the notebook scores it with the trained\nPerpetual GBM, then bootstraps log-space residuals from comparable\n2024 sales to estimate a distribution of likely sale prices.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ecfG",
+      "code_hash": "d617276dc23cfd6c18addf4abf3fb7cb",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "multiple-defs",
+          "evalue": "The variable 'districts' was defined by another cell",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Pvdt",
+      "code_hash": "f3c3cf8ea9a7a7650505a9c96d700cfa",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ZBYS",
+      "code_hash": "53067510633ac7b39674dc2d274b10d0",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "aLJB",
+      "code_hash": "8a808b7a009c679ffccf608acbb99f48",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "nHfw",
+      "code_hash": "4dfd82fa66b8194258aa52c6dfac18f6",
+      "outputs": [],
+      "console": []
+    }
+  ]
+}

@@ -6,7 +6,7 @@ each MLflow run fully reproducible from its logged params.
 
 Usage::
 
-    from src.models.config import Experiment, PerpetualConfig, ModelType
+    from src.models.property_price.config import Experiment, PerpetualConfig, ModelType
 
     experiment = Experiment(
         model_type=ModelType.perpetual,
@@ -22,13 +22,13 @@ from enum import StrEnum
 from pathlib import Path  # noqa: TC003
 
 from src.data.config import MLRUNS_DIR, MODELS_DIR, PROCESSED_DATA_PATH
-from src.features.build_features import FeatureConfig
+from src.models.property_price.features import FeatureConfig
 
 
 class CVStrategy(StrEnum):
     """Time-series cross-validation fold strategy.
 
-    Used by :func:`src.models.cv.make_cv_splits` for evaluation utilities.
+    Used by :func:`src.models.property_price.cv.make_cv_splits` for evaluation utilities.
     """
 
     sliding_window = "sliding_window"
@@ -77,7 +77,7 @@ class PerpetualConfig:
 
 @dataclass
 class CVConfig:
-    """Cross-validation configuration for :func:`src.models.cv.make_cv_splits`.
+    """Cross-validation configuration for :func:`src.models.property_price.cv.make_cv_splits`.
 
     Attributes:
         strategy: Split strategy (sliding, expanding, or year-based).

@@ -1,4 +1,4 @@
-"""Tests for src/models/investigate.py."""
+"""Tests for src/models/property_price/investigate.py."""
 
 from __future__ import annotations
 
@@ -6,8 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.models.investigate import (
-    CalibrationBin,
+from src.models.property_price.investigate import (
     ImputationBiasResult,
     InvestigationSummary,
     PermutationImportanceResult,
@@ -22,8 +21,6 @@ from src.models.investigate import (
     regional_performance,
     run_investigations,
 )
-from src.models.evaluate import RegressionMetrics
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -148,14 +145,14 @@ class TestImputationBiasAnalysis:
 
     def test_with_nulls_detected(self, sample_test_df_with_nulls, y_true, y_pred):
         feature_cols = ["total_floor_area", "number_habitable_rooms"]
-        result = imputation_bias_analysis(
-            sample_test_df_with_nulls, y_true, y_pred, feature_cols
-        )
+        result = imputation_bias_analysis(sample_test_df_with_nulls, y_true, y_pred, feature_cols)
         assert result.n_imputed == 30
         assert result.n_complete == N - 30
         assert result.imputed_fraction == pytest.approx(30 / N)
 
-    def test_imputed_metrics_computed_when_sufficient(self, sample_test_df_with_nulls, y_true, y_pred):
+    def test_imputed_metrics_computed_when_sufficient(
+        self, sample_test_df_with_nulls, y_true, y_pred
+    ):
         feature_cols = ["total_floor_area"]
         result = imputation_bias_analysis(
             sample_test_df_with_nulls, y_true, y_pred, feature_cols, min_group_size=10
@@ -192,7 +189,11 @@ class TestPlotImputationBias:
         import matplotlib.pyplot as plt
 
         result = ImputationBiasResult(
-            imputed_metrics=None, complete_metrics=None, n_imputed=0, n_complete=0, imputed_fraction=0.0
+            imputed_metrics=None,
+            complete_metrics=None,
+            n_imputed=0,
+            n_complete=0,
+            imputed_fraction=0.0,
         )
         fig = plot_imputation_bias(result)
         assert hasattr(fig, "savefig")
@@ -265,8 +266,8 @@ class TestPermutationImportanceStudy:
     @pytest.fixture
     def fitted_pipeline(self):
         """Tiny fitted perpetual pipeline for use in permutation importance tests."""
-        from src.features.build_features import FeatureConfig, MissingStrategy
-        from src.models.perpetual_model import build_perpetual_pipeline
+        from src.models.property_price.features import FeatureConfig, MissingStrategy
+        from src.models.property_price.perpetual import build_perpetual_pipeline
 
         rng = np.random.default_rng(0)
         n = 120
@@ -373,8 +374,8 @@ class TestRunInvestigations:
     @pytest.fixture
     def pipeline_and_data(self, tmp_path):
         """Minimal fitted pipeline + train/test data for run_investigations."""
-        from src.features.build_features import FeatureConfig, MissingStrategy
-        from src.models.perpetual_model import build_perpetual_pipeline
+        from src.models.property_price.features import FeatureConfig, MissingStrategy
+        from src.models.property_price.perpetual import build_perpetual_pipeline
 
         rng = np.random.default_rng(7)
         n = 200

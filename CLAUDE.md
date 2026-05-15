@@ -47,17 +47,25 @@ src/
       land_registry.py  # HM Land Registry Price Paid
       epc.py            # Energy Performance Certificates
       uk_hpi.py         # UK House Price Index
-  features/
-    build_features.py   # FeatureConfig, pipeline builder, MedianByGroupBaseline
   models/
-    config.py           # Experiment, PerpetualConfig, ModelType dataclasses
-    perpetual_model.py  # Perpetual GBM pipeline (primary model)
-    linear.py           # RidgeCV pipeline
-    cv.py               # Time-series CV utilities
-    evaluate.py         # RegressionMetrics, compute_metrics
-    registry.py         # MLflow tracking and model registry helpers
-    train_model.py      # train() orchestrator + Typer CLI subcommands
+    property_price/     # UK property sale price prediction (Perpetual GBM + Ridge)
+      config.py         # Experiment, PerpetualConfig, ModelType, CVConfig dataclasses
+      features.py       # FeatureConfig, build_feature_pipeline, join_hpi_to_sales
+      derived.py        # DerivedFeatureTransformer (log_floor_area, floor_area_per_room…)
+      perpetual.py      # PerpetualWrapper + build_perpetual_pipeline (primary model)
+      linear.py         # build_linear_pipeline (RidgeCV)
+      cv.py             # Time-series CV: make_cv_splits, temporal_train_test_split
+      evaluate.py       # RegressionMetrics, compute_metrics, evaluate_on_test
+      investigate.py    # Calibration, SHAP, permutation importance, regional perf
+      registry.py       # MLflow tracking and model registry helpers
+      predict.py        # load_pipeline, predict_price, bootstrap_distribution
+      train.py          # train() orchestrator + Typer CLI subcommands
+    hpi_forecast/       # UK HPI time-series forecasting (ETS / SARIMA / Ensemble)
+      forecasters.py    # ForecastResult, HPIForecaster ABC, ETS/SARIMA/Trend/Ensemble/ARIMAX
 tests/                  # pytest tests mirroring src structure
+  models/
+    property_price/     # Tests for src/models/property_price/
+    hpi_forecast/       # Tests for src/models/hpi_forecast/
 ```
 
 ## Model training

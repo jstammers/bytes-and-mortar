@@ -16,7 +16,7 @@ when using the default file store.
 
 Usage::
 
-    from src.models.registry import setup_mlflow, log_and_register_model
+    from src.models.property_price.registry import setup_mlflow, log_and_register_model
 
     setup_mlflow(experiment)
     with mlflow.start_run(run_name="perpetual_train") as run:
@@ -39,8 +39,8 @@ if TYPE_CHECKING:
     import pandas as pd
     from sklearn.pipeline import Pipeline
 
-    from src.models.config import Experiment
-    from src.models.evaluate import RegressionMetrics
+    from src.models.property_price.config import Experiment
+    from src.models.property_price.evaluate import RegressionMetrics
 
 logger = logging.getLogger(__name__)
 

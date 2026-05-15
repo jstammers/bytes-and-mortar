@@ -11,7 +11,7 @@ comparison baseline during model evaluation.
 
 Usage::
 
-    from src.features.build_features import FeatureConfig, build_feature_pipeline
+    from src.models.property_price.features import FeatureConfig, build_feature_pipeline
 
     config = FeatureConfig(missing_strategy=MissingStrategy.impute)
     pipeline = build_feature_pipeline(config)
@@ -125,7 +125,7 @@ class FeatureConfig:
     missing_strategy: MissingStrategy = MissingStrategy.impute
     log_transform_target: bool = True
     derived_features: bool = False
-    """If ``True``, prepend a :class:`~src.features.derived.DerivedFeatureTransformer`
+    """If ``True``, prepend a :class:`~src.models.property_price.derived.DerivedFeatureTransformer`
     step that adds ``log_floor_area``, ``floor_area_per_room``, and
     ``energy_rating_numeric`` before the main column transformer."""
 
@@ -134,7 +134,7 @@ class FeatureConfig:
         """Ordered union of all feature column names (original columns only).
 
         Does not include derived feature column names — those are computed by
-        :class:`~src.features.derived.DerivedFeatureTransformer` inside the
+        :class:`~src.models.property_price.derived.DerivedFeatureTransformer` inside the
         pipeline and are never present in the raw DataFrame.
         """
         return self.numeric_features + self.categorical_features + self.target_encode_features
@@ -144,12 +144,12 @@ class FeatureConfig:
         """Numeric features passed to the ColumnTransformer.
 
         When ``derived_features=True``, appends the three derived column names
-        (:data:`~src.features.derived.DERIVED_NUMERIC_FEATURES`) so the
+        (:data:`~src.models.property_price.derived.DERIVED_NUMERIC_FEATURES`) so the
         ColumnTransformer processes them after :class:`DerivedFeatureTransformer`
         has added them to the DataFrame.
         """
         if self.derived_features:
-            from src.features.derived import DERIVED_NUMERIC_FEATURES
+            from src.models.property_price.derived import DERIVED_NUMERIC_FEATURES
 
             return self.numeric_features + DERIVED_NUMERIC_FEATURES
         return self.numeric_features
@@ -365,7 +365,7 @@ def build_feature_pipeline(config: FeatureConfig) -> Pipeline:
     )
 
     if config.derived_features:
-        from src.features.derived import DerivedFeatureTransformer
+        from src.models.property_price.derived import DerivedFeatureTransformer
 
         return Pipeline(
             [

@@ -41,7 +41,7 @@ from src.data.sources.epc import EPCData
 from src.data.sources.land_registry import LandRegistryPricePaid
 from src.data.sources.ons import ONSTimeSeries
 from src.data.sources.uk_hpi import UKHousePriceIndex
-from src.models.train_model import train_app
+from src.models.property_price.train import train_app
 
 app = typer.Typer(help="UK property data ingestion pipeline.")
 app.add_typer(train_app, name="train")

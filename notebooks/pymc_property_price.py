@@ -98,7 +98,7 @@ def _load_data(mo, nrows_slider, pd):
 @app.cell
 def _feature_prep(df, mo, np, pd, test_year_picker):
     """Prepare features using the shared FeatureConfig API."""
-    from src.features.build_features import FeatureConfig, MissingStrategy
+    from src.models.property_price.features import FeatureConfig, MissingStrategy
 
     if df is None:
         mo.stop(True, mo.md("⚠️  No data loaded."))
@@ -128,8 +128,12 @@ def _feature_prep(df, mo, np, pd, test_year_picker):
     test_df["district_idx"] = test_df["district"].map(district_idx).fillna(-1).astype(int)
 
     log_price_train = np.log(train_df["price"].values.astype(float))
-    floor_area_train = (train_df["total_floor_area"].values - train_df["total_floor_area"].mean()) / train_df["total_floor_area"].std()
-    energy_eff_train = (train_df["current_energy_efficiency"].values - train_df["current_energy_efficiency"].mean()) / train_df["current_energy_efficiency"].std()
+    floor_area_train = (
+        train_df["total_floor_area"].values - train_df["total_floor_area"].mean()
+    ) / train_df["total_floor_area"].std()
+    energy_eff_train = (
+        train_df["current_energy_efficiency"].values - train_df["current_energy_efficiency"].mean()
+    ) / train_df["current_energy_efficiency"].std()
 
     n_districts = len(districts)
 
@@ -225,14 +229,16 @@ def _model_and_sampling(
 @app.cell
 def _diagnostics(az, idata, mo):
     """MCMC convergence diagnostics."""
-    summary = az.summary(idata, var_names=["mu_alpha", "sigma_alpha", "beta_floor", "beta_energy", "sigma"])
+    summary = az.summary(
+        idata, var_names=["mu_alpha", "sigma_alpha", "beta_floor", "beta_energy", "sigma"]
+    )
     rhat_ok = (summary["r_hat"] < 1.05).all()
 
     mo.md(
         f"""
         ### Convergence diagnostics
 
-        **R-hat < 1.05 for all parameters:** {'✅ Yes' if rhat_ok else '⚠️  No — consider more tuning steps or chains'}
+        **R-hat < 1.05 for all parameters:** {"✅ Yes" if rhat_ok else "⚠️  No — consider more tuning steps or chains"}
 
         {summary.to_html()}
         """
@@ -268,7 +274,9 @@ def _district_intercepts(az, districts, idata, mo, np):
 
     fig, ax = plt.subplots(figsize=(10, 8))
     y_pos = np.arange(top_n)
-    ax.barh(y_pos, alpha_mean[sorted_idx[-top_n:]], color="steelblue", alpha=0.7, label="Posterior mean")
+    ax.barh(
+        y_pos, alpha_mean[sorted_idx[-top_n:]], color="steelblue", alpha=0.7, label="Posterior mean"
+    )
     ax.errorbar(
         alpha_mean[sorted_idx[-top_n:]],
         y_pos,
@@ -304,7 +312,7 @@ def _district_intercepts(az, districts, idata, mo, np):
 @app.cell
 def _test_evaluation(district_idx, idata, mo, np, test_df):
     """Posterior predictive evaluation on the held-out test set."""
-    from src.models.evaluate import compute_metrics
+    from src.models.property_price.evaluate import compute_metrics
 
     # Only evaluate on test rows with known districts
     test_known = test_df[test_df["district_idx"] >= 0].copy()
@@ -312,7 +320,11 @@ def _test_evaluation(district_idx, idata, mo, np, test_df):
         mo.md("⚠️  No test rows with known districts — skipping evaluation.")
     else:
         # Posterior mean prediction: exp(alpha[d] + beta*X)
-        alpha_post_mean = idata.posterior["alpha"].values.reshape(-1, idata.posterior.dims["alpha_dim_0"]).mean(axis=0)
+        alpha_post_mean = (
+            idata.posterior["alpha"]
+            .values.reshape(-1, idata.posterior.dims["alpha_dim_0"])
+            .mean(axis=0)
+        )
         beta_floor_mean = float(idata.posterior["beta_floor"].values.mean())
         beta_energy_mean = float(idata.posterior["beta_energy"].values.mean())
 

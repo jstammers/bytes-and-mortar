@@ -21,7 +21,7 @@ properties that take weeks to register with the Land Registry.
 
 Usage::
 
-    from src.models.cv import make_cv_splits, CVConfig, CVStrategy
+    from src.models.property_price.cv import make_cv_splits, CVConfig, CVStrategy
 
     splits = make_cv_splits(df, CVConfig(strategy=CVStrategy.sliding_window))
     for fold, (train_idx, val_idx) in enumerate(splits):
@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from src.models.config import CVConfig, CVStrategy
+from src.models.property_price.config import CVConfig, CVStrategy
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

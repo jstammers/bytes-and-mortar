@@ -1,11 +1,11 @@
-"""Tests for src/models/evaluate.py."""
+"""Tests for src/models/property_price/evaluate.py."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from src.models.evaluate import (
+from src.models.property_price.evaluate import (
     RegressionMetrics,
     compute_metrics,
     cv_metrics_summary,

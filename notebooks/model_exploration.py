@@ -22,21 +22,14 @@ On first run, ONS Local Authority District boundaries are downloaded into
 
 import marimo
 
-__generated_with = "0.6.0"
+__generated_with = "0.20.4"
 app = marimo.App(width="wide")
-
-
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
 
 
 @app.cell
 def _imports():
     import warnings
-    from pathlib import Path
 
-    import folium
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
@@ -44,27 +37,25 @@ def _imports():
     import polars as pl
 
     warnings.filterwarnings("ignore")
-    return Path, folium, mo, np, pd, pl, plt, warnings
+    return mo, np, pd, pl, plt
 
 
 @app.cell
 def _intro(mo):
-    mo.md(
-        """
-        # Property model exploration
+    mo.md("""
+    # Property model exploration
 
-        Diagnose the trained Perpetual GBM:
-        1. How do regional house prices track the **HPI** — and where does the model err most?
-        2. How have prices for **each property type** moved across the country, and where do
-           they sell above / below the national average?
-        3. **Score one property** interactively and see the predictive distribution.
-        """
-    )
+    Diagnose the trained Perpetual GBM:
+    1. How do regional house prices track the **HPI** — and where does the model err most?
+    2. How have prices for **each property type** moved across the country, and where do
+       they sell above / below the national average?
+    3. **Score one property** interactively and see the predictive distribution.
+    """)
     return
 
 
 @app.cell
-def _config(Path):
+def _config():
     from src.data.config import (
         HPI_REGIONAL_DATA_PATH,
         MODELS_DIR,
@@ -87,14 +78,28 @@ def _config(Path):
 
 
 @app.cell
-def _load_holdout(CACHE_DIR, HOLDOUT_YEARS, PROCESSED_DATA_PATH, mo, pd, pl):
+def _load_holdout(
+    CACHE_DIR,
+    HOLDOUT_YEARS,
+    HPI_REGIONAL_DATA_PATH,
+    PROCESSED_DATA_PATH,
+    mo,
+    pd,
+    pl,
+):
     """Lazy-scan the processed parquet and materialise only the 2024 holdout.
 
-    Result is cached to data/processed/notebook_cache/holdout_<years>.parquet
-    so subsequent runs skip the scan.
+    HPI features (averageprice, index) are joined here — they are stored
+    separately in uk_hpi_regional.parquet and not embedded in the main sales
+    parquet.  The trained pipeline was fitted with these features via
+    join_hpi_to_sales(), so they must be present before calling pipeline.predict.
+
+    Result is cached to data/processed/notebook_cache/holdout_<years>_hpi.parquet.
     """
+    from src.models.property_price.features import join_hpi_to_sales
+
     cache_key = "_".join(str(y) for y in HOLDOUT_YEARS)
-    holdout_cache = CACHE_DIR / f"holdout_{cache_key}.parquet"
+    holdout_cache = CACHE_DIR / f"holdout_{cache_key}_hpi.parquet"
 
     if not PROCESSED_DATA_PATH.exists():
         mo.md(
@@ -108,7 +113,10 @@ def _load_holdout(CACHE_DIR, HOLDOUT_YEARS, PROCESSED_DATA_PATH, mo, pd, pl):
         lf = pl.scan_parquet(PROCESSED_DATA_PATH).filter(
             pl.col("date_of_transfer").dt.year().is_in(HOLDOUT_YEARS)
         )
-        holdout = lf.collect().to_pandas()
+        lf = join_hpi_to_sales(lf, HPI_REGIONAL_DATA_PATH)
+        collected = lf.collect()
+        assert isinstance(collected, pl.DataFrame)
+        holdout = collected.to_pandas()
         holdout.to_parquet(holdout_cache)
 
     if holdout is not None:
@@ -117,12 +125,12 @@ def _load_holdout(CACHE_DIR, HOLDOUT_YEARS, PROCESSED_DATA_PATH, mo, pd, pl):
             f"(years: {HOLDOUT_YEARS}) across "
             f"**{holdout['district'].nunique():,}** districts."
         )
-    return cache_key, holdout, holdout_cache
+    return cache_key, holdout
 
 
 @app.cell
 def _load_model(MODEL_PATH, mo):
-    from src.models.predict import load_pipeline
+    from src.models.property_price.predict import load_pipeline
 
     try:
         pipeline = load_pipeline(MODEL_PATH)
@@ -132,19 +140,19 @@ def _load_model(MODEL_PATH, mo):
         mo.md("**Model not found.** Run `just train` first to fit a Perpetual GBM.").callout(
             kind="warn"
         )
-    return load_pipeline, pipeline
+    return (pipeline,)
 
 
 @app.cell
 def _holdout_predictions(CACHE_DIR, cache_key, holdout, np, pd, pipeline):
     """Score the holdout slice with the trained pipeline and cache predictions."""
-    pred_cache = CACHE_DIR / f"holdout_preds_{cache_key}.parquet"
+    pred_cache = CACHE_DIR / f"holdout_preds_{cache_key}_hpi.parquet"
     if holdout is None or pipeline is None:
         scored = None
     elif pred_cache.exists():
         scored = pd.read_parquet(pred_cache)
     else:
-        from src.features.build_features import FEATURE_SCHEMA
+        from src.models.property_price.features import FEATURE_SCHEMA
 
         feature_cols = [c for c in FEATURE_SCHEMA if c in holdout.columns]
         X = holdout[feature_cols]
@@ -158,12 +166,7 @@ def _holdout_predictions(CACHE_DIR, cache_key, holdout, np, pd, pipeline):
         scored["residual_log"] = scored["y_log"] - scored["y_pred_log"]
         scored["abs_pct_error"] = (scored["y_pred"] - scored["price"]).abs() / scored["price"]
         scored.to_parquet(pred_cache)
-    return pred_cache, scored
-
-
-# ---------------------------------------------------------------------------
-# Geometries (loaded once, reused across sections)
-# ---------------------------------------------------------------------------
+    return (scored,)
 
 
 @app.cell
@@ -181,29 +184,22 @@ def _load_geometries(mo):
             "`data/geo/lad_boundaries.geojson`."
         ).callout(kind="warn")
     geo_status
-    return geo_status, geometries, load_lad_geometries
-
-
-# ---------------------------------------------------------------------------
-# Section 1 — HPI vs regional house prices, model accuracy by region
-# ---------------------------------------------------------------------------
+    return (geometries,)
 
 
 @app.cell
 def _section_1_header(mo):
-    mo.md(
-        """
-        ## 1. HPI vs regional house prices
+    mo.md("""
+    ## 1. HPI vs regional house prices
 
-        How do district-level **actual** sale prices compare to the **UK HPI**,
-        and where does the model predict well or poorly?
-        """
-    )
+    How do district-level **actual** sale prices compare to the **UK HPI**,
+    and where does the model predict well or poorly?
+    """)
     return
 
 
 @app.cell
-def _section_1_aggregates(holdout, HPI_REGIONAL_DATA_PATH, mo, pd, pl):
+def _section_1_aggregates(HPI_REGIONAL_DATA_PATH, holdout, mo, pl):
     if holdout is None:
         actual_by_district = None
         hpi_by_district = None
@@ -230,7 +226,12 @@ def _section_1_aggregates(holdout, HPI_REGIONAL_DATA_PATH, mo, pd, pl):
 
 
 @app.cell
-def _section_1_actual_vs_hpi_maps(actual_by_district, geometries, hpi_by_district, mo):
+def _section_1_actual_vs_hpi_maps(
+    actual_by_district,
+    geometries,
+    hpi_by_district,
+    mo,
+):
     from src.viz.maps import choropleth
 
     if actual_by_district is None or geometries is None:
@@ -281,7 +282,7 @@ def _section_1_actual_vs_hpi_maps(actual_by_district, geometries, hpi_by_distric
             ]
         )
     side_by_side
-    return choropleth, side_by_side
+    return (choropleth,)
 
 
 @app.cell
@@ -311,7 +312,7 @@ def _section_1_regional_mdape(geometries, mo, scored):
         )
         mdape_map = mo.iframe(fmap._repr_html_(), height="600px")
     mdape_map
-    return mdape_map, regional_mdape
+    return choropleth, regional_mdape
 
 
 @app.cell
@@ -328,7 +329,7 @@ def _section_1_leaderboards(mo, regional_mdape):
             ]
         )
     leaderboard
-    return best, leaderboard, worst
+    return
 
 
 @app.cell
@@ -343,7 +344,7 @@ def _section_1_forecast_controls(holdout, mo):
             label="Forecast district",
         )
     district_picker
-    return district_picker, districts
+    return (district_picker,)
 
 
 @app.cell
@@ -354,7 +355,7 @@ def _section_1_forecast(HPI_REGIONAL_DATA_PATH, district_picker, mo, pl, plt):
     elif not HPI_REGIONAL_DATA_PATH.exists():
         forecast_fig = mo.md("_HPI regional file missing._").callout(kind="warn")
     else:
-        from src.models.hpi_forecast import EnsembleForecaster
+        from src.models.hpi_forecast.forecasters import EnsembleForecaster
 
         district = district_picker.value
         hpi_df = (
@@ -391,29 +392,22 @@ def _section_1_forecast(HPI_REGIONAL_DATA_PATH, district_picker, mo, pl, plt):
             plt.tight_layout()
             forecast_fig = mo.mpl.interactive(fig)
     forecast_fig
-    return forecast_fig
-
-
-# ---------------------------------------------------------------------------
-# Section 2 — Property types over time + spatial deviation
-# ---------------------------------------------------------------------------
-
-
-@app.cell
-def _section_2_header(mo):
-    mo.md(
-        """
-        ## 2. Property types over time
-
-        National trend by property type, then how each type's median deviates from
-        the national average across the country in a chosen year.
-        """
-    )
     return
 
 
 @app.cell
-def _section_2_load_typed(CACHE_DIR, PROCESSED_DATA_PATH, mo, pd, pl):
+def _section_2_header(mo):
+    mo.md("""
+    ## 2. Property types over time
+
+    National trend by property type, then how each type's median deviates from
+    the national average across the country in a chosen year.
+    """)
+    return
+
+
+@app.cell
+def _section_2_load_typed(CACHE_DIR, PROCESSED_DATA_PATH, pd, pl):
     """National median price by year x property_type, aggregated at scan time."""
     cache = CACHE_DIR / "national_price_by_type_year.parquet"
     if not PROCESSED_DATA_PATH.exists():
@@ -434,7 +428,7 @@ def _section_2_load_typed(CACHE_DIR, PROCESSED_DATA_PATH, mo, pd, pl):
             .to_pandas()
         )
         national.to_parquet(cache)
-    return cache, national
+    return (national,)
 
 
 @app.cell
@@ -453,7 +447,7 @@ def _section_2_national_trend(mo, national, plt):
         plt.tight_layout()
         national_fig = mo.mpl.interactive(fig)
     national_fig
-    return national_fig
+    return
 
 
 @app.cell
@@ -476,13 +470,14 @@ def _section_2_deviation_controls(mo, national):
         )
         controls = mo.hstack([year_slider, type_picker])
     controls
-    return controls, type_picker, year_slider
+    return type_picker, year_slider
 
 
 @app.cell
 def _section_2_deviation_map(
     CACHE_DIR,
     PROCESSED_DATA_PATH,
+    choropleth,
     geometries,
     mo,
     pd,
@@ -521,9 +516,7 @@ def _section_2_deviation_map(
             dev["pct_dev"] = (dev["median_price"] - national_median) / national_median
             dev.to_parquet(cache)
 
-        from src.viz.maps import choropleth
-
-        fmap = choropleth(
+        fmap2 = choropleth(
             dict(zip(dev["district"], dev["pct_dev"], strict=False)),
             title=f"{pt} price deviation from national median, {year}",
             legend_name="% deviation",
@@ -531,13 +524,21 @@ def _section_2_deviation_map(
             geometries=geometries,
             bins=7,
         )
-        deviation_map = mo.iframe(fmap._repr_html_(), height="600px")
+        deviation_map = mo.iframe(fmap2._repr_html_(), height="600px")
     deviation_map
-    return deviation_map
+    return
 
 
 @app.cell
-def _section_2_top_bottom(CACHE_DIR, PROCESSED_DATA_PATH, mo, pd, pl, type_picker, year_slider):
+def _section_2_top_bottom(
+    CACHE_DIR,
+    PROCESSED_DATA_PATH,
+    mo,
+    pd,
+    pl,
+    type_picker,
+    year_slider,
+):
     """Top-10 above / bottom-10 below the national median for the chosen year + type."""
     if year_slider is None or type_picker is None or not PROCESSED_DATA_PATH.exists():
         leaderboards = mo.md("")
@@ -577,25 +578,18 @@ def _section_2_top_bottom(CACHE_DIR, PROCESSED_DATA_PATH, mo, pd, pl, type_picke
             ]
         )
     leaderboards
-    return leaderboards
-
-
-# ---------------------------------------------------------------------------
-# Section 3 — Interactive valuation
-# ---------------------------------------------------------------------------
+    return
 
 
 @app.cell
 def _section_3_header(mo):
-    mo.md(
-        """
-        ## 3. Interactive valuation
+    mo.md("""
+    ## 3. Interactive valuation
 
-        Specify a property below and the notebook scores it with the trained
-        Perpetual GBM, then bootstraps log-space residuals from comparable
-        2024 sales to estimate a distribution of likely sale prices.
-        """
-    )
+    Specify a property below and the notebook scores it with the trained
+    Perpetual GBM, then bootstraps log-space residuals from comparable
+    2024 sales to estimate a distribution of likely sale prices.
+    """)
     return
 
 
@@ -673,8 +667,8 @@ def _section_3_bootstrap(mo, np, pipeline, scored, single_row, ui):
         point = None
         scope = None
     else:
-        from src.features.build_features import FEATURE_SCHEMA
-        from src.models.predict import bootstrap_distribution, predict_price
+        from src.models.property_price.features import FEATURE_SCHEMA
+        from src.models.property_price.predict import bootstrap_distribution, predict_price
 
         feature_cols = [c for c in FEATURE_SCHEMA if c in single_row.columns]
         X = single_row[feature_cols]
@@ -705,7 +699,7 @@ def _section_3_bootstrap(mo, np, pipeline, scored, single_row, ui):
             """
         )
     bootstrap_panel
-    return bootstrap_panel, point, samples, scope
+    return point, samples
 
 
 @app.cell
@@ -729,7 +723,7 @@ def _section_3_distribution_plot(mo, np, plt, point, samples):
         plt.tight_layout()
         dist_fig = mo.mpl.interactive(fig)
     dist_fig
-    return dist_fig
+    return
 
 
 @app.cell
@@ -760,7 +754,7 @@ def _section_3_comparables(holdout, mo, ui):
             cols = [c for c in cols if c in comps.columns]
             comps_panel = mo.ui.table(comps[cols].reset_index(drop=True))
     comps_panel
-    return comps, comps_panel
+    return
 
 
 if __name__ == "__main__":

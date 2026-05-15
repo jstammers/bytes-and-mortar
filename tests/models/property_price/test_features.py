@@ -1,4 +1,4 @@
-"""Tests for src/features/build_features.py."""
+"""Tests for src/models/property_price/features.py."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.build_features import (
+from src.models.property_price.features import (
     DEFAULT_CATEGORICAL_FEATURES,
     DEFAULT_NUMERIC_FEATURES,
     DEFAULT_TARGET_ENCODE_FEATURES,
@@ -236,3 +236,86 @@ class TestMedianByGroupBaseline:
         baseline = MedianByGroupBaseline()
         with pytest.raises(NotFittedError):
             baseline.predict(pd.DataFrame({"property_type": ["D"], "district": ["X"]}))
+
+
+# ---------------------------------------------------------------------------
+# Derived features integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestDerivedFeaturesInPipeline:
+    def test_build_feature_pipeline_with_derived(self):
+        """Pipeline with derived_features=True should include a 'derive' step."""
+        from sklearn.pipeline import Pipeline
+
+        from src.models.property_price.features import (
+            FeatureConfig,
+            MissingStrategy,
+            build_feature_pipeline,
+        )
+
+        config = FeatureConfig(
+            numeric_features=["total_floor_area", "number_habitable_rooms"],
+            categorical_features=["property_type"],
+            target_encode_features=["district"],
+            missing_strategy=MissingStrategy.impute,
+            derived_features=True,
+        )
+        pipeline = build_feature_pipeline(config)
+        assert isinstance(pipeline, Pipeline)
+        assert "derive" in pipeline.named_steps
+
+    def test_derived_pipeline_fit_transform(self):
+        """Pipeline with derived=True should transform without errors."""
+        import numpy as np
+
+        from src.models.property_price.features import (
+            FeatureConfig,
+            MissingStrategy,
+            build_feature_pipeline,
+        )
+
+        config = FeatureConfig(
+            numeric_features=["total_floor_area", "number_habitable_rooms"],
+            categorical_features=["property_type"],
+            target_encode_features=["district"],
+            missing_strategy=MissingStrategy.impute,
+            derived_features=True,
+        )
+        pipeline = build_feature_pipeline(config)
+        rng = np.random.default_rng(1)
+        n = 50
+        df = pd.DataFrame(
+            {
+                "total_floor_area": rng.uniform(30, 250, n),
+                "number_habitable_rooms": rng.integers(1, 6, n).astype(float),
+                "property_type": rng.choice(["D", "S", "T"], n),
+                "district": rng.choice(["Westminster", "Lambeth"], n),
+                "current_energy_rating": rng.choice(["A", "B", "C"], n),
+            }
+        )
+        y = rng.uniform(100_000, 800_000, n)
+        out = pipeline.fit_transform(df, y)
+        assert out.shape[0] == n
+
+    def test_effective_numeric_features_includes_derived(self):
+        from src.models.property_price.derived import DERIVED_NUMERIC_FEATURES
+        from src.models.property_price.features import FeatureConfig
+
+        config = FeatureConfig(derived_features=True)
+        assert all(f in config.effective_numeric_features for f in DERIVED_NUMERIC_FEATURES)
+
+    def test_effective_numeric_features_without_derived(self):
+        from src.models.property_price.features import DEFAULT_NUMERIC_FEATURES, FeatureConfig
+
+        config = FeatureConfig(derived_features=False)
+        assert config.effective_numeric_features == DEFAULT_NUMERIC_FEATURES
+
+    def test_all_features_does_not_include_derived(self):
+        """all_features returns only the *raw* columns for validation / loading."""
+        from src.models.property_price.derived import DERIVED_NUMERIC_FEATURES
+        from src.models.property_price.features import FeatureConfig
+
+        config = FeatureConfig(derived_features=True)
+        for feat in DERIVED_NUMERIC_FEATURES:
+            assert feat not in config.all_features

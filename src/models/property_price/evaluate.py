@@ -6,7 +6,7 @@ must exponentiate predictions before passing them here.
 
 Usage::
 
-    from src.models.evaluate import compute_metrics, RegressionMetrics
+    from src.models.property_price.evaluate import compute_metrics, RegressionMetrics
 
     metrics = compute_metrics(y_true=test_prices, y_pred=predictions)
     print(f"RMSE: £{metrics.rmse:,.0f}  MAPE: {metrics.mape:.1%}")

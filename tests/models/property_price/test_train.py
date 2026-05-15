@@ -13,8 +13,8 @@ import numpy as np
 import polars as pl
 import pytest
 
-from src.features.build_features import FeatureConfig, MissingStrategy
-from src.models.config import Experiment, ModelType, PerpetualConfig
+from src.models.property_price.config import Experiment, ModelType, PerpetualConfig
+from src.models.property_price.features import FeatureConfig, MissingStrategy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,8 +98,8 @@ class TestTrain:
     def test_train_perpetual_returns_pipeline_and_metrics(self, base_experiment):
         from sklearn.pipeline import Pipeline
 
-        from src.models.evaluate import RegressionMetrics
-        from src.models.train_model import train
+        from src.models.property_price.evaluate import RegressionMetrics
+        from src.models.property_price.train import train
 
         pipeline, metrics = train(base_experiment)
         assert isinstance(pipeline, Pipeline)
@@ -108,7 +108,7 @@ class TestTrain:
     def test_train_linear_returns_pipeline(self, base_experiment, tmp_path):
         from sklearn.pipeline import Pipeline
 
-        from src.models.train_model import train
+        from src.models.property_price.train import train
 
         experiment = Experiment(
             model_type=ModelType.linear,
@@ -128,14 +128,14 @@ class TestTrain:
         assert isinstance(pipeline, Pipeline)
 
     def test_metrics_have_finite_values(self, base_experiment):
-        from src.models.train_model import train
+        from src.models.property_price.train import train
 
         _, metrics = train(base_experiment)
         assert np.isfinite(metrics.rmse)
         assert np.isfinite(metrics.r2)
 
     def test_model_saved_locally(self, base_experiment):
-        from src.models.train_model import train
+        from src.models.property_price.train import train
 
         train(base_experiment)
         local_model = base_experiment.models_dir / f"{base_experiment.model_type}_best.joblib"
@@ -144,7 +144,7 @@ class TestTrain:
     def test_mlflow_run_created(self, base_experiment):
         import mlflow
 
-        from src.models.train_model import train
+        from src.models.property_price.train import train
 
         train(base_experiment)
 
@@ -157,7 +157,7 @@ class TestTrain:
         assert len(runs) >= 1
 
     def test_missing_data_file_raises(self, base_experiment, tmp_path):
-        from src.models.train_model import train
+        from src.models.property_price.train import train
 
         bad_experiment = Experiment(
             model_type=base_experiment.model_type,
@@ -177,7 +177,7 @@ class TestTrain:
         """All three missing strategies should complete without error."""
         from sklearn.pipeline import Pipeline
 
-        from src.models.train_model import train
+        from src.models.property_price.train import train
 
         parquet_path, _ = synthetic_df
         experiment = Experiment(
@@ -197,4 +197,3 @@ class TestTrain:
         )
         pipeline, _ = train(experiment)
         assert isinstance(pipeline, Pipeline)
-
