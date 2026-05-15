@@ -12,7 +12,7 @@ Computes new features from raw columns before the main ColumnTransformer step:
 
 Usage::
 
-    from src.features.derived import DerivedFeatureTransformer
+    from src.models.property_price.derived import DerivedFeatureTransformer
 
     transformer = DerivedFeatureTransformer()
     X_enriched = transformer.fit_transform(X_raw)  # adds new columns in-place

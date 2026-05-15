@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.models.evaluate import RegressionMetrics, compute_metrics
+from src.models.property_price.evaluate import RegressionMetrics, compute_metrics
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -486,9 +486,7 @@ def plot_calibration(bins: list[CalibrationBin]) -> plt.Figure:
     # Reliability diagram
     min_v = min(min(mean_preds), min(mean_actuals))
     max_v = max(max(mean_preds), max(mean_actuals))
-    axes[0].plot(
-        [min_v, max_v], [min_v, max_v], "r--", lw=2, label="Perfect calibration", zorder=3
-    )
+    axes[0].plot([min_v, max_v], [min_v, max_v], "r--", lw=2, label="Perfect calibration", zorder=3)
     axes[0].plot(mean_preds, mean_actuals, "o-", color="steelblue", lw=2, label="Actual mean")
     axes[0].set_xlabel("Mean Predicted Price (£000s)", fontsize=11)
     axes[0].set_ylabel("Mean Actual Price (£000s)", fontsize=11)
@@ -556,9 +554,7 @@ def regional_performance(
         results[region] = metrics
         logger.debug("Region %-30s n=%4d  MdAPE=%.1f%%", region, n, 100 * metrics.mdape)
 
-    logger.info(
-        "Regional performance: %d regions with ≥%d samples", len(results), min_samples
-    )
+    logger.info("Regional performance: %d regions with ≥%d samples", len(results), min_samples)
     return results
 
 
@@ -603,7 +599,9 @@ def plot_regional_performance(
 
     fig, ax = plt.subplots(figsize=(10, max(6, len(regs) * 0.38)))
     ax.barh(regs, vals, color=colors, edgecolor="white")
-    ax.axvline(overall_mean, color="black", linestyle="--", lw=1.5, label=f"Mean={overall_mean:.1f}%")
+    ax.axvline(
+        overall_mean, color="black", linestyle="--", lw=1.5, label=f"Mean={overall_mean:.1f}%"
+    )
     ylabel = f"{metric.upper()} (%)" if metric in ("mdape", "mape") else metric.upper()
     ax.set_xlabel(ylabel, fontsize=11)
     ax.set_title(
@@ -842,7 +840,10 @@ def run_investigations(
         )
         if bias_result.imputed_metrics:
             mlflow.log_metrics(
-                {f"investigate_imputed_{k}": v for k, v in bias_result.imputed_metrics.to_dict().items()}
+                {
+                    f"investigate_imputed_{k}": v
+                    for k, v in bias_result.imputed_metrics.to_dict().items()
+                }
             )
         if bias_result.complete_metrics:
             mlflow.log_metrics(

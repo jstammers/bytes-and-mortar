@@ -117,7 +117,7 @@ async def forecast_hpi(
 
 def _build_forecaster(method: str):  # type: ignore[return]
     """Instantiate the requested HPIForecaster."""
-    from src.models.hpi_forecast import (
+    from src.models.hpi_forecast.forecasters import (
         EnsembleForecaster,
         ETSForecaster,
         SARIMAForecaster,

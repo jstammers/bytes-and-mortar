@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 
 from src.data.pipeline import save_hpi_regional
-from src.features.build_features import join_hpi_to_sales
+from src.models.property_price.features import join_hpi_to_sales
 
 
 @pytest.fixture

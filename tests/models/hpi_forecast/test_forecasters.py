@@ -1,4 +1,4 @@
-"""Tests for src.models.hpi_forecast — HPI time-series forecasting.
+"""Tests for src.models.hpi_forecast.forecasters — HPI time-series forecasting.
 
 These tests use synthetic data to keep CI fast and avoid any dependency on
 downloaded HPI files.  The statsmodels-backed forecasters (ETS, SARIMA) are
@@ -14,7 +14,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from src.models.hpi_forecast import (
+from src.models.hpi_forecast.forecasters import (
     EnsembleForecaster,
     ForecastResult,
     TrendForecaster,
@@ -268,7 +268,7 @@ statsmodels_missing = pytest.mark.skipif(
 @statsmodels_missing
 class TestETSForecaster:
     def test_fit_and_forecast(self) -> None:
-        from src.models.hpi_forecast import ETSForecaster
+        from src.models.hpi_forecast.forecasters import ETSForecaster
 
         values, dates = _synthetic_hpi(48)
         result = ETSForecaster().fit(values, dates).forecast(12)
@@ -276,14 +276,14 @@ class TestETSForecaster:
         assert result.method == "ets"
 
     def test_pi_ordering(self) -> None:
-        from src.models.hpi_forecast import ETSForecaster
+        from src.models.hpi_forecast.forecasters import ETSForecaster
 
         values, dates = _synthetic_hpi(48)
         result = ETSForecaster().fit(values, dates).forecast(12)
         assert np.all(result.lower <= result.upper)
 
     def test_aic_in_metadata(self) -> None:
-        from src.models.hpi_forecast import ETSForecaster
+        from src.models.hpi_forecast.forecasters import ETSForecaster
 
         values, dates = _synthetic_hpi(48)
         result = ETSForecaster().fit(values, dates).forecast(6)
@@ -291,7 +291,7 @@ class TestETSForecaster:
         assert np.isfinite(result.metadata["aic"])
 
     def test_forecast_before_fit_raises(self) -> None:
-        from src.models.hpi_forecast import ETSForecaster
+        from src.models.hpi_forecast.forecasters import ETSForecaster
 
         with pytest.raises(RuntimeError, match="fit"):
             ETSForecaster().forecast(6)
@@ -300,7 +300,7 @@ class TestETSForecaster:
 @statsmodels_missing
 class TestSARIMAForecaster:
     def test_fit_and_forecast(self) -> None:
-        from src.models.hpi_forecast import SARIMAForecaster
+        from src.models.hpi_forecast.forecasters import SARIMAForecaster
 
         values, dates = _synthetic_hpi(60)
         result = SARIMAForecaster().fit(values, dates).forecast(12)
@@ -308,14 +308,14 @@ class TestSARIMAForecaster:
         assert result.method == "sarima"
 
     def test_pi_ordering(self) -> None:
-        from src.models.hpi_forecast import SARIMAForecaster
+        from src.models.hpi_forecast.forecasters import SARIMAForecaster
 
         values, dates = _synthetic_hpi(60)
         result = SARIMAForecaster().fit(values, dates).forecast(12)
         assert np.all(result.lower <= result.upper)
 
     def test_aic_in_metadata(self) -> None:
-        from src.models.hpi_forecast import SARIMAForecaster
+        from src.models.hpi_forecast.forecasters import SARIMAForecaster
 
         values, dates = _synthetic_hpi(60)
         result = SARIMAForecaster().fit(values, dates).forecast(6)
@@ -323,7 +323,7 @@ class TestSARIMAForecaster:
         assert np.isfinite(result.metadata["aic"])
 
     def test_custom_order(self) -> None:
-        from src.models.hpi_forecast import SARIMAForecaster
+        from src.models.hpi_forecast.forecasters import SARIMAForecaster
 
         values, dates = _synthetic_hpi(60)
         f = SARIMAForecaster(order=(0, 1, 1), seasonal_order=(0, 1, 1, 12))
@@ -331,7 +331,7 @@ class TestSARIMAForecaster:
         assert result.metadata["order"] == (0, 1, 1)
 
     def test_forecast_before_fit_raises(self) -> None:
-        from src.models.hpi_forecast import SARIMAForecaster
+        from src.models.hpi_forecast.forecasters import SARIMAForecaster
 
         with pytest.raises(RuntimeError, match="fit"):
             SARIMAForecaster().forecast(6)
@@ -340,7 +340,11 @@ class TestSARIMAForecaster:
 @statsmodels_missing
 class TestEnsembleWithAllForecasters:
     def test_all_three_components(self) -> None:
-        from src.models.hpi_forecast import ETSForecaster, EnsembleForecaster, SARIMAForecaster  # noqa: I001
+        from src.models.hpi_forecast.forecasters import (
+            ETSForecaster,
+            EnsembleForecaster,
+            SARIMAForecaster,
+        )  # noqa: I001
 
         values, dates = _synthetic_hpi(60)
         f = EnsembleForecaster(forecasters=[ETSForecaster(), SARIMAForecaster(), TrendForecaster()])
@@ -350,7 +354,11 @@ class TestEnsembleWithAllForecasters:
         assert len(result.metadata["component_weights"]) == 3
 
     def test_aic_based_weights_sum_to_one(self) -> None:
-        from src.models.hpi_forecast import ETSForecaster, EnsembleForecaster, SARIMAForecaster  # noqa: I001
+        from src.models.hpi_forecast.forecasters import (
+            ETSForecaster,
+            EnsembleForecaster,
+            SARIMAForecaster,
+        )  # noqa: I001
 
         values, dates = _synthetic_hpi(60)
         f = EnsembleForecaster(forecasters=[ETSForecaster(), SARIMAForecaster(), TrendForecaster()])
@@ -363,7 +371,7 @@ class TestEnsembleWithAllForecasters:
 @statsmodels_missing
 class TestARIMAXForecaster:
     def test_fit_and_forecast_no_exog(self) -> None:
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         values, dates = _synthetic_hpi(60)
         f = ARIMAXForecaster()
@@ -373,7 +381,7 @@ class TestARIMAXForecaster:
         assert result.method == "arimax"
 
     def test_fit_and_forecast_with_exog(self) -> None:
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         values, dates = _synthetic_hpi(60)
         rng = np.random.default_rng(1)
@@ -385,7 +393,7 @@ class TestARIMAXForecaster:
         assert result.metadata["exog_names"] == ["base_rate"]
 
     def test_flat_forward_when_future_exog_missing(self) -> None:
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         values, dates = _synthetic_hpi(60)
         exog = np.ones((60, 1)) * 0.75
@@ -396,13 +404,13 @@ class TestARIMAXForecaster:
         assert result.horizon == 6
 
     def test_forecast_before_fit_raises(self) -> None:
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         with pytest.raises(RuntimeError, match="fit"):
             ARIMAXForecaster().forecast(6)
 
     def test_aic_in_metadata(self) -> None:
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         values, dates = _synthetic_hpi(60)
         result = ARIMAXForecaster().fit(values, dates).forecast(6)
@@ -410,7 +418,7 @@ class TestARIMAXForecaster:
         assert np.isfinite(result.metadata["aic"])
 
     def test_pi_bounds_ordered(self) -> None:
-        from src.models.hpi_forecast import ARIMAXForecaster
+        from src.models.hpi_forecast.forecasters import ARIMAXForecaster
 
         values, dates = _synthetic_hpi(60)
         result = ARIMAXForecaster().fit(values, dates).forecast(12)

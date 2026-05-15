@@ -1,4 +1,4 @@
-"""Tests for src/models/cv.py."""
+"""Tests for src/models/property_price/cv.py."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.models.config import CVConfig, CVStrategy
-from src.models.cv import (
+from src.models.property_price.config import CVConfig, CVStrategy
+from src.models.property_price.cv import (
     make_cv_splits,
     stratified_subsample,
     temporal_train_test_split,

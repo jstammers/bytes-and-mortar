@@ -38,6 +38,9 @@ notebooks = [
     "marimo>=0.6",
     "pymc>=5.10",
     "arviz>=0.18",
+    "geopandas>=1.0",
+    "folium>=0.17",
+    "mapclassify>=2.6",
 ]
 app = [
     "fastapi>=0.110",
@@ -78,6 +81,15 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
+
+# Marimo notebooks follow conventions (cell args as kwargs from prior cells,
+# bare trailing expressions for cell rendering, sklearn-style `X` capitalisation)
+# that don't fit the strict naming/B018 rules used for src/ and tests/.
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.py" = ["N803", "N806", "B018", "RUF001"]
+# `X`/`X_train`/`X_test`/`X_holdout` is sklearn idiom; flagging it in tests is noisy.
+"tests/test_predict.py" = ["N803", "N806"]
+"src/models/predict.py" = ["N803"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

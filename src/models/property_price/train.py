@@ -28,17 +28,17 @@ import numpy as np
 import polars as pl
 import typer
 
-from src.features.build_features import (
+from src.models.property_price.config import Experiment, ModelType, PerpetualConfig
+from src.models.property_price.cv import temporal_train_test_split
+from src.models.property_price.evaluate import RegressionMetrics, evaluate_on_test
+from src.models.property_price.features import (
     FeatureConfig,
     MedianByGroupBaseline,
     MissingStrategy,
     join_hpi_to_sales,
     validate_features,
 )
-from src.models.config import Experiment, ModelType, PerpetualConfig
-from src.models.cv import temporal_train_test_split
-from src.models.evaluate import RegressionMetrics, evaluate_on_test
-from src.models.registry import (
+from src.models.property_price.registry import (
     log_and_register_model,
     log_params_and_tags,
     setup_mlflow,
@@ -126,7 +126,7 @@ def _apply_missing_strategy(
 def _build_pipeline(experiment: Experiment):
     """Return an unfitted pipeline for the configured model type."""
     if experiment.model_type == ModelType.perpetual:
-        from src.models.perpetual_model import build_perpetual_pipeline
+        from src.models.property_price.perpetual import build_perpetual_pipeline
 
         return build_perpetual_pipeline(
             feature_config=experiment.feature_config,
@@ -134,7 +134,7 @@ def _build_pipeline(experiment: Experiment):
             objective=experiment.perpetual_config.objective,
         )
     elif experiment.model_type == ModelType.linear:
-        from src.models.linear import build_linear_pipeline
+        from src.models.property_price.linear import build_linear_pipeline
 
         return build_linear_pipeline(feature_config=experiment.feature_config)
     else:
@@ -337,7 +337,7 @@ def predict(
         1-D array of predicted prices in GBP.
     """
     from src.data.config import MODELS_DIR
-    from src.models.registry import load_model
+    from src.models.property_price.registry import load_model
 
     pipeline = load_model(model_name=model_name, models_dir=MODELS_DIR)
 
@@ -534,7 +534,7 @@ def investigate_command(
 
         import mlflow
 
-        from src.models.investigate import run_investigations
+        from src.models.property_price.investigate import run_investigations
 
         setup_mlflow(experiment)
 
@@ -551,7 +551,7 @@ def investigate_command(
             df = _apply_missing_strategy(df, feat_config)
             df_pd = df.to_pandas()
 
-            from src.models.cv import temporal_train_test_split
+            from src.models.property_price.cv import temporal_train_test_split
 
             train_df, test_df = temporal_train_test_split(
                 df_pd,
@@ -575,7 +575,7 @@ def investigate_command(
 
             # ---- Standard test metrics ----
             y_pred_log = pipeline.predict(X_test)
-            from src.models.evaluate import evaluate_on_test
+            from src.models.property_price.evaluate import evaluate_on_test
 
             test_metrics_dict = evaluate_on_test(
                 model_pred=y_pred_log,

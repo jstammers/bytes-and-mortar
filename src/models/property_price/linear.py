@@ -13,7 +13,7 @@ Sklearn pipeline structure::
 
 Usage::
 
-    from src.models.linear import build_linear_pipeline
+    from src.models.property_price.linear import build_linear_pipeline
 
     pipeline = build_linear_pipeline()
     pipeline.fit(X_train, y_train_log)
@@ -28,7 +28,7 @@ import numpy as np
 from sklearn.linear_model import RidgeCV
 from sklearn.pipeline import Pipeline
 
-from src.features.build_features import FeatureConfig, build_feature_pipeline
+from src.models.property_price.features import FeatureConfig, build_feature_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ def build_linear_pipeline(
     Returns:
         Unfitted ``sklearn.pipeline.Pipeline``.
     """
-    from src.features.build_features import MissingStrategy
+    from src.models.property_price.features import MissingStrategy
 
     if feature_config is None:
         feature_config = FeatureConfig(missing_strategy=MissingStrategy.impute)
